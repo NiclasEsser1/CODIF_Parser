@@ -35,7 +35,7 @@ CONFIG1BEAM = {"nbeam":           18,  # Expected number from configuration, the
 # It is used to test beamforming on the GPU backend instead of using the BMF stage.
 BYPASSBMFCONFIG = {"nbeam":           36,  # Expected number fro m configuration, the real number depends on the number of alive NiCs
                "nbeam_per_nic":   36,
-               "nbeams_per_port":  9,
+               "nbeams_per_port":  1,
                "nchunk_per_port": 1,
                "nchunk_total": 18
                }
@@ -340,7 +340,7 @@ if __name__ == "__main__":
     nbeam = 36
     nchunk_offset = 0
 
-    nchunk = 18
+    nchunk = 6
     nbeam = 1
     nchunk_offset = 0
 
