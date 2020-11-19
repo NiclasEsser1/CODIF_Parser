@@ -179,15 +179,15 @@ if __name__ == '__main__':
     i = 0
     reader.next()
     reader.add()
-    ref_epoch = reader.packet_list[0].header.header["codif"]["epoch_start_sec"]
+    ref_epoch = reader.packet_list[0].header.header["codif"]["word1"]["epoch_start_sec"]
     while(reader.next()):
         i+=1
         reader.add()
         writer.write("\n\n-----------\nPacket #" + str(i) + "\n-----------\n")
-        if ref_epoch != reader.packet_list[i].header.header["codif"]["epoch_start_sec"]:
+        if ref_epoch != reader.packet_list[i].header.header["codif"]["word1"]["epoch_start_sec"]:
             print("Old ref epoch: " + str(ref_epoch) )
-            ref_epoch = reader.packet_list[i].header.header["codif"]["epoch_start_sec"]
+            ref_epoch = reader.packet_list[i].header.header["codif"]["word1"]["epoch_start_sec"]
             print("New ref epoch detected: " + str(ref_epoch) )
             print("Setting to new epoch ref")
-            print("Last dataframe of old ref epoch: " + str(reader.packet_list[i-1].header.header["codif"]["frame_number"]) )
+            print("Last dataframe of old ref epoch: " + str(reader.packet_list[i-1].header.header["codif"]["word1"]["frame_number"]) )
         # json.dump(reader.packet.header.header["codif"], writer, indent=4)
