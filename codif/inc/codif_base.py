@@ -230,5 +230,6 @@ class Payload:
         for block in range(BLOCKS_IN_PACKET):
             for channel in range(CHANNELS_IN_BLOCK):
                 for pol in range(POLARIZATION):
-                    self.payload[block, channel, pol] += struct.unpack("!H", self.stream.read(2))[0]
+                    print(pol, channel, block)
+                    self.payload[block, channel, pol] = struct.unpack("!H", self.stream.read(2))[0]
                     self.payload[block, channel, pol] += struct.unpack("!H", self.stream.read(2))[0] *1j
