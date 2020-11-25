@@ -100,7 +100,7 @@ class Header:
         self.header = {"eth" : {}, "ipv4" : {}, "udp" : {}, "codif" : { "word"+str(i) : {} for i in range(0,8)  }}
         self.stream = stream
         # Decide whether or not to parse protocol layer 1-3
-        if stream.nbytes == TOTAL_HEADER_BYTES:
+        if stream.getbuffer().nbytes == TOTAL_HEADER_BYTES:
             self.parse_eth_hdr()
             self.parse_ipv4_hdr()
             self.parse_udp_hdr()
