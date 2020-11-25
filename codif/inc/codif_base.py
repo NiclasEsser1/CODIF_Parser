@@ -57,6 +57,7 @@ class CodifReadDada:
         self.packet = 0
     def next(self):
         frame = self.reader.read(PACKET_SIZE)
+        print(frame)
         if(len(frame) == PACKET_SIZE):
             self.packet = CodifPacket(io.BytesIO(frame))
             return True
@@ -68,16 +69,14 @@ class CodifReadDada:
         self.packet_list.append(self.packet)
 
     def read_bytes(self, bytes):
-        while(bytes):
-            if(len(bytes) >= PACKET_SIZE):
-                if(self.next()):
-                    self.add()
-                else:
-                    print("Could not parse packet")
-                bytes = bytes - PACKET_SIZE
+        while(bytes > 0):
+            if(self.next()):
+                json.dumps(packet.header["codif"], indent=4)
+                self.add()
             else:
-                print("Could not read packet remaining bytes < PACKET_SIZE")
-                return
+                print("Could not parse packet")
+            bytes = bytes - PACKET_SIZE
+            print(bytes)
 
     def read_all(self):
         print("Not implemented")
@@ -232,6 +231,5 @@ class Payload:
         for block in range(BLOCKS_IN_PACKET):
             for channel in range(CHANNELS_IN_BLOCK):
                 for pol in range(POLARIZATION):
-                    print(pol, channel, block)
                     self.payload[block, channel, pol] = struct.unpack("!H", self.stream.read(2))[0]
                     self.payload[block, channel, pol] += struct.unpack("!H", self.stream.read(2))[0] *1j
