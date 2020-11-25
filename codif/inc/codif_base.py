@@ -99,9 +99,11 @@ class Header:
     def __init__(self, stream):
         self.header = {"eth" : {}, "ipv4" : {}, "udp" : {}, "codif" : { "word"+str(i) : {} for i in range(0,8)  }}
         self.stream = stream
-        self.parse_eth_hdr()
-        self.parse_ipv4_hdr()
-        self.parse_udp_hdr()
+        # Decide whether or not to parse protocol layer 1-3
+        if stream.nbytes == TOTAL_HEADER_BYTES:
+            self.parse_eth_hdr()
+            self.parse_ipv4_hdr()
+            self.parse_udp_hdr()
         self.parse_codif_hdr()
         # print(json.dumps(self.header, indent=4))
 
@@ -217,7 +219,7 @@ class Payload:
     def __init__(self, stream, header):
         self.stream = stream
         self.header = header
-        self.payload = np.zeros((BLOCKS_IN_PACKET, CHANNELS_IN_BLOCK, 2), dtype="complex")
+        self.payload = np.zeros((BLOCKS_IN_PACKET, CHANNELS_IN_BLOCK, POLARIZATION), dtype="complex")
         self.read_payload()
         self.beam_id = 0
         self.channels = 0
