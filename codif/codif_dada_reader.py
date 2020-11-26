@@ -15,5 +15,4 @@ if __name__ == '__main__':
     packets = parser.parse_args().packets
 
     reader = CodifReadDada(fname)
-    print(packets * PACKET_SIZE)
     reader.read_bytes(int(packets * PACKET_SIZE))

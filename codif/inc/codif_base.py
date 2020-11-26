@@ -68,11 +68,17 @@ class CodifReadDada:
     def add(self):
         self.packet_list.append(self.packet)
 
-    def read_bytes(self, bytes):
+    def read_bytes(self, bytes, validate=True):
+        old_packet = 0
         while(bytes > 0):
-            if(self.next()):
-                print(packet.header["codif"], "\n")
-                self.add()
+            if self.next():
+                if validate:
+                    if proof_order(self.packet, old_packet):
+                        old_packet = self.packet
+                    else:
+                        break
+                else:
+                    self.add()
             else:
                 print("Could not parse packet")
             bytes = bytes - PACKET_SIZE
@@ -81,17 +87,40 @@ class CodifReadDada:
     def read_all(self):
         print("Not implemented")
 
-    def proof_order(self):
-        ref_packet = packet_list.at(0)
-        if(len(packet_list) > ref_packet.period):
-            print("Proofing order")
+    def proof_order(self, packet, old_packet):
+        # initial packet
+        if old_packet == 0:
+            return True
+        # Same data frame
+        if packet.beam-1 == old_packet.beam:
+            if packet.frame_number == old_packet.frame_number and packet.epoch_start_sec == old_packet.epoch_start_sec:
+                return True
+            else:
+                print(not_order_msg())
+                return False
+        # new data frame index
+        elif old_packet.beam == 35 and packet.beam == 0:
+            if packet.frame_number-1 == old_packet.frame_number and packet.epoch_start_sec == old_packet.epoch_start_sec:
+                return True
+            # New period
+            elif packet.frame_number == 0 and old_packet.frame_number == 249999 and packet.epoch_start_sec + packet.period == old_packet.epoch_start_sec:
+                return True
+            else:
+                print(not_order_msg())
+                return False
         else:
-            print("Not full period read")
+            print(not_order_msg())
+            return False
+        return True
+
+    def not_order_msg:
+        return str("Packet "+str(packet.frame_number)+ " with beam index "+str(packet.beam)+" in epoch "str(packet.epoch_start_sec)+" not trusted/in order \n Previous packet +str(old_packet.frame_number)+ " with beam index "+str(old_packet.beam)+" in epoch "str(old_packet.epoch_start_sec)+" not trusted/in order")
 
 class CodifPacket:
     def __init__(self, bytestream):
         self.stream = bytestream
-        self.header = Header(self.stream).header
+        print("HALLO")
+        self.header = Header(self.stream)
         self.payload = Payload(self.stream, self.header)
 
 class Header:
@@ -170,7 +199,7 @@ class Header:
         self.header["codif"]["word1"]["station_id"] = header[1] & 0x000000000000FFFF
         self.header["codif"]["word2"]["block_length"] = header[2] >> 48
         self.header["codif"]["word2"]["channels_per_thread"] = (header[2] & 0x0000FFFF00000000) >> 32
-        self.header["codif"]["word2"]["thread_id"] = (header[2] & 0x00000000FFFF0000) >> 16
+        self.header["codif"]["word2"]["freq_group"] = (header[2] & 0x00000000FFFF0000) >> 16
         self.header["codif"]["word2"]["beam_id"] = (header[2] & 0x000000000000FFFF)
         self.header["codif"]["word3"]["reserved16"] = header[3] >> 48
         self.header["codif"]["word3"]["period"] = (header[3] & 0x0000FFFF00000000) >> 32
@@ -196,7 +225,7 @@ class Header:
         self.station_id = self.header["codif"]["word1"]["station_id"]
         self.block_length = self.header["codif"]["word2"]["block_length"]
         self.channels_per_thread = self.header["codif"]["word2"]["channels_per_thread"]
-        self.thread_id = self.header["codif"]["word2"]["thread_id"]
+        self.freq_group = self.header["codif"]["word2"]["threafreq_groupd_id"]
         self.beam_id = self.header["codif"]["word2"]["beam_id"]
         self.reserved16 = self.header["codif"]["word3"]["reserved16"]
         self.period = self.header["codif"]["word3"]["period"]
@@ -219,6 +248,7 @@ class Payload:
         self.stream = stream
         self.header = header
         self.payload = np.zeros((BLOCKS_IN_PACKET, CHANNELS_IN_BLOCK, POLARIZATION), dtype="complex")
+            print("\nHI\n")
         self.read_payload()
         self.beam_id = 0
         self.channels = 0
@@ -233,3 +263,4 @@ class Payload:
                 for pol in range(POLARIZATION):
                     self.payload[block, channel, pol] = struct.unpack("!H", self.stream.read(2))[0]
                     self.payload[block, channel, pol] += struct.unpack("!H", self.stream.read(2))[0] *1j
+        print(payload)
