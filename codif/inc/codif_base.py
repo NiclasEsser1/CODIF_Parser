@@ -27,16 +27,16 @@ class CodifReadPcap:
     def __init__(self, fname):
         self.fname = fname
         try:
-            self.reader = pcapy.open_offline(self.fname)
+            self.cfile = pcapy.open_offline(self.fname)
         except IOError as e:
             raise e
         self.packet_list = []
         self.packet = 0
 
     def set_bpf_filter(self, filter):
-        self.reader.setfilter(filter)
+        self.cfile.setfilter(filter)
     def next(self):
-        frame = self.reader.next()[1]
+        frame = self.cfile.next()[1]
         if(frame):
             self.packet = CodifPacket(io.BytesIO(frame))
             return True
@@ -50,16 +50,18 @@ class CodifReadDada:
     def __init__(self, fname):
         self.fname = fname
         try:
-            self.reader = open(self.fname, "rb")
+            self.cfile = open(self.fname, "rb")
         except IOError as e:
             raise e
+        dada_header = self.cfile.read(4096)
         self.packet_list = []
         self.packet = 0
+        self.packet_cnt = 0
     def next(self):
-        frame = self.reader.read(PACKET_SIZE)
-        print(frame)
+        frame = self.cfile.read(PACKET_SIZE)
         if(len(frame) == PACKET_SIZE):
             self.packet = CodifPacket(io.BytesIO(frame))
+            self.packet_cnt += 1
             return True
         else:
             print("Could not read packet")
@@ -68,58 +70,75 @@ class CodifReadDada:
     def add(self):
         self.packet_list.append(self.packet)
 
-    def read_bytes(self, bytes, validate=True):
+    def read(self, bytes=-1, validate=True):
         old_packet = 0
-        while(bytes > 0):
-            if self.next():
-                if validate:
-                    if proof_order(self.packet, old_packet):
-                        old_packet = self.packet
+        if bytes != -1:
+            while(bytes > 0):
+                if self.next():
+                    if validate:
+                        if not self.proof_order(self.packet, old_packet):
+                            print(self.not_order_msg(self.packet, old_packet))
+                            # break
+                            old_packet = old_packet
                     else:
-                        break
+                        self.add()
+                else:
+                    print("Could not parse packet")
+                bytes = bytes - PACKET_SIZE
+        else:
+            while self.next():
+                if validate:
+                    if not self.proof_order(self.packet, old_packet):
+                        print(self.not_order_msg(self.packet, old_packet))
+                        # break
+                    old_packet = self.packet
                 else:
                     self.add()
-            else:
-                print("Could not parse packet")
-            bytes = bytes - PACKET_SIZE
-            print(bytes)
 
-    def read_all(self):
-        print("Not implemented")
 
+    # Horrible dirty function
     def proof_order(self, packet, old_packet):
         # initial packet
         if old_packet == 0:
             return True
         # Same data frame
-        if packet.beam-1 == old_packet.beam:
-            if packet.frame_number == old_packet.frame_number and packet.epoch_start_sec == old_packet.epoch_start_sec:
+        if packet.header.beam_id-1 == old_packet.header.beam_id:
+            if packet.header.frame_number == old_packet.header.frame_number and packet.header.epoch_start_sec == old_packet.header.epoch_start_sec:
                 return True
             else:
-                print(not_order_msg())
                 return False
         # new data frame index
-        elif old_packet.beam == 35 and packet.beam == 0:
-            if packet.frame_number-1 == old_packet.frame_number and packet.epoch_start_sec == old_packet.epoch_start_sec:
+        elif old_packet.header.beam_id == 35 and packet.header.beam_id == 0:
+            if packet.header.frame_number-1 == old_packet.header.frame_number and packet.header.epoch_start_sec == old_packet.header.epoch_start_sec:
                 return True
             # New period
-            elif packet.frame_number == 0 and old_packet.frame_number == 249999 and packet.epoch_start_sec + packet.period == old_packet.epoch_start_sec:
+            elif packet.header.frame_number == 0 and old_packet.header.frame_number == 249999 and packet.header.epoch_start_sec + packet.header.period == old_packet.header.epoch_start_sec:
                 return True
             else:
-                print(not_order_msg())
                 return False
         else:
-            print(not_order_msg())
             return False
         return True
 
-    def not_order_msg:
-        return str("Packet "+str(packet.frame_number)+ " with beam index "+str(packet.beam)+" in epoch "str(packet.epoch_start_sec)+" not trusted/in order \n Previous packet +str(old_packet.frame_number)+ " with beam index "+str(old_packet.beam)+" in epoch "str(old_packet.epoch_start_sec)+" not trusted/in order")
+    def not_order_msg(self, packet, old_packet):
+        string = ("Packet not in order! Read "+str(self.packet_cnt)+"\nPacket "
+            + str(packet.header.frame_number)
+            + " with beam index "
+            + str(packet.header.beam_id)
+            + " in epoch "
+            + str(packet.header.epoch_start_sec)
+            + " not trusted/in order \nPrevious packet "
+            + str(old_packet.header.frame_number)
+            + " with beam index "
+            + str(old_packet.header.beam_id)
+            + " in epoch "
+            + str(old_packet.header.epoch_start_sec)
+            + " not trusted/in order")
+        return string
 
 class CodifPacket:
     def __init__(self, bytestream):
         self.stream = bytestream
-        print("HALLO")
         self.header = Header(self.stream)
         self.payload = Payload(self.stream, self.header)
 
@@ -225,7 +244,7 @@ class Header:
         self.station_id = self.header["codif"]["word1"]["station_id"]
         self.block_length = self.header["codif"]["word2"]["block_length"]
         self.channels_per_thread = self.header["codif"]["word2"]["channels_per_thread"]
-        self.freq_group = self.header["codif"]["word2"]["threafreq_groupd_id"]
+        self.freq_group = self.header["codif"]["word2"]["freq_group"]
         self.beam_id = self.header["codif"]["word2"]["beam_id"]
         self.reserved16 = self.header["codif"]["word3"]["reserved16"]
         self.period = self.header["codif"]["word3"]["period"]
@@ -248,7 +267,6 @@ class Payload:
         self.stream = stream
         self.header = header
         self.payload = np.zeros((BLOCKS_IN_PACKET, CHANNELS_IN_BLOCK, POLARIZATION), dtype="complex")
-            print("\nHI\n")
         self.read_payload()
         self.beam_id = 0
         self.channels = 0
@@ -257,10 +275,8 @@ class Payload:
     def read_payload(self):
         # self.beam_id = struct.unpack("!B", self.stream.read(1))[0]
         # self.channels = struct.unpack("!B", self.stream.read(1))[0]
-        # print(self.beam_id, self.channels)
         for block in range(BLOCKS_IN_PACKET):
             for channel in range(CHANNELS_IN_BLOCK):
                 for pol in range(POLARIZATION):
                     self.payload[block, channel, pol] = struct.unpack("!H", self.stream.read(2))[0]
                     self.payload[block, channel, pol] += struct.unpack("!H", self.stream.read(2))[0] *1j
-        print(payload)
