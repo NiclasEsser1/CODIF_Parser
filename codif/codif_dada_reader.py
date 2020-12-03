@@ -16,5 +16,5 @@ if __name__ == '__main__':
     packets = int(parser.parse_args().packets)
     validate = bool(parser.parse_args().validate)
 
-    reader = CodifReadDada(fname)
-    reader.read(packets*PACKET_SIZE,validate)
+    reader = CodifAndDada(fname)
+    reader.read(packets, validate)

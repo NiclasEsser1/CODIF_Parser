@@ -23,20 +23,26 @@ POLARIZATION = 2
 def format_mac_address(mac_string):
     return ':'.join('%02x' % b for b in bytearray(mac_string))
 
+def get_file_list(directory, fname_expr) :
+    if directory[-1] != "/"
+        directory += "/"
+   key_expr = directory + fname_expr
+   return sorted(glob.glob(os.path.join("", key_expr)))
+
 class CodifReadPcap:
     def __init__(self, fname):
         self.fname = fname
         try:
-            self.cfile = pcapy.open_offline(self.fname)
+            self.input_file = pcapy.open_offline(self.fname)
         except IOError as e:
             raise e
         self.packet_list = []
         self.packet = 0
 
     def set_bpf_filter(self, filter):
-        self.cfile.setfilter(filter)
+        self.input_file.setfilter(filter)
     def next(self):
-        frame = self.cfile.next()[1]
+        frame = self.input_file.next()[1]
         if(frame):
             self.packet = CodifPacket(io.BytesIO(frame))
             return True
@@ -46,19 +52,25 @@ class CodifReadPcap:
     def add(self):
         self.packet_list.append(self.packet)
 
-class CodifReadDada:
-    def __init__(self, fname):
+class CodifAndDada:
+    def __init__(self, fname, outfile=""):
         self.fname = fname
         try:
-            self.cfile = open(self.fname, "rb")
+            self.input_file = open(self.fname, "rb")
         except IOError as e:
             raise e
-        dada_header = self.cfile.read(4096)
+        if outfile != "":
+            try:
+                self.output_file = open(self.fname, "wb+")
+            except IOError as e:
+                raise e
+
+        self.dada_header = self.input_file.read(4096)
         self.packet_list = []
         self.packet = 0
         self.packet_cnt = 0
     def next(self):
-        frame = self.cfile.read(PACKET_SIZE)
+        frame = self.input_file.read(PACKET_SIZE)
         if(len(frame) == PACKET_SIZE):
             self.packet = CodifPacket(io.BytesIO(frame))
             self.packet_cnt += 1
@@ -67,19 +79,26 @@ class CodifReadDada:
             print("Could not read packet")
             return False
 
-    def add(self):
-        self.packet_list.append(self.packet)
-
-    def read(self, bytes=-1, validate=True):
+    def add(self, packet=None):
+        if packet == None:
+            self.packet_list.append(self.packet)
+        else:
+            self.packet_list.append(packet)
+    def read(self, packets=-1, validate=False, remove=False):
         old_packet = 0
-        if bytes != -1:
+        if packets != -1:
+            bytes = packets*PACKET_SIZE
             while(bytes > 0):
                 if self.next():
                     if validate:
                         if not self.proof_order(self.packet, old_packet):
                             print(self.not_order_msg(self.packet, old_packet))
-                            # break
                             old_packet = old_packet
+                    if remove:
+                        if not self.proof_order(self.packet, old_packet):
+                            old_packet = old_packet
+                        else:
+                            self.add()
                     else:
                         self.add()
                 else:
@@ -94,6 +113,14 @@ class CodifReadDada:
                     old_packet = self.packet
                 else:
                     self.add()
+
+    def write(self, end, start=0):
+        if self.output_file:
+            if len(self.packet_list) >= end - start:
+                for packet_idx in range(start,end):
+                    self.output_file.write(packet_list[packet_idx].steam)
+        else:
+            raise "Error: File not opened, can not write"
 
 
     # Horrible dirty function
