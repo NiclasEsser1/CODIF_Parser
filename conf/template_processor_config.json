@@ -1,0 +1,8 @@
+{
+  "processor" : "beamformer",
+  "input" : "dada",
+  "output" : "dat",
+  "format" : "codif",
+  "order" : "TFATFP",
+  "dimension" : [1024,16,36,128,7,2],
+}
