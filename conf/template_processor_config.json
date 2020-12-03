@@ -3,6 +3,12 @@
   "input" : "dada",
   "output" : "dat",
   "format" : "codif",
-  "order" : "TFATFP",
-  "dimension" : [1024,16,36,128,7,2],
+  "order" : {
+    "F": 16,
+    "T": 1024,
+    "A": 36,
+    "T": 128,
+    "F": 7,
+    "P": 2
+  }
 }

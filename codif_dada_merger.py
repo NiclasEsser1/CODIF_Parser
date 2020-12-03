@@ -11,7 +11,7 @@ if __name__ == '__main__':
     parser.add_argument('--fin', '-i', action = "store", default = "", dest = "fin", help = "Input file name with directory (filetype '.dada')")
     parser.add_argument('--dir', '-d', action = "store", default = "", dest = "dir", help = "Input file name with directory (filetype '.dada')")
     parser.add_argument('--fout', '-o', action = "store", default = "", dest = "fout", help = "Input file name with directory (filetype '.dada')")
-    parser.add_argument('--chunk', '-c', action = "store", default=-1, dest = "chunk", help = "Packets to read from .dada file")
+    parser.add_argument('--time_chunks', '-c', action = "store", default=-1, dest = "chunk", help = "Packets to read from .dada file")
 
     fin = parser.parse_args().fin
     fout = parser.parse_args().fout
@@ -21,12 +21,10 @@ if __name__ == '__main__':
     file_list = utils.get_file_list(directory, fin)
 
     # Iterate through all files with the same identifier
+    handler_list = []
     for file in file_list:
-        handler = proto.CodifFile(file, fout)
-        size = os.path.getsize(file)
-        while bytes > 0:
-            handler.read(chunk, True, True)
-            handler.write()
-            bytes -= chunk*PACKET_SIZE
-            if chunk == -1:
-                break
+        handler_list.append(proto.CodifFile(file, fout))
+
+    for handler in handler_list:
+        handler.read(chunk, True, True)
+        handler.write()

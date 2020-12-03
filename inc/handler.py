@@ -1,26 +1,60 @@
 import pcapy
 import struct
+from inc import protocols
 
 class HandlerError(Exception):
     pass
 
 class CodifHandler:
+    def __init__(self, fin_list, type="dada", fout=""):
+        self.fin_list = fin_list
+        self.fout = fout
+        self.handles = []
+        if type(fout) is list:
+            if len(fout) == len(fin_list):
+                for idx, file in enumerate(fin_list):
+                    self.file_handle.append( CodifFile(file, type, fout[idx]) )
+            else:
+                raise HandlerError("failed init: list size not identical")
+        elif type(fout) is str:
+            for file in (fin_list):
+                self.file_handle.append( CodifFile(file, type, fout) )
+
+
+    def clean(self, chunks=2048):
+        if fout == "":
+            raise HandlerError("failed clean(): Outputfile must provided in order to clean")
+        for file in self.file_handle:
+            file.read(chunks, True, True)
+            file.write()
+
+    def merge(self):
+        pass
+    def validate(self, packets):
+        for file in self.file_handle:
+            print("Validating file "+file.fname)
+            file.read(packets, True)
+
+    def to_array(self):
+        pass
+
+class CodifFile:
     def __init__(self, fname, type="dada", outfile=""):
         self.fname = fname
         self.type = type
-        if type = "dada":
+        if self.type == "dada":
             try:
                 self.input_file = open(self.fname, "rb")
             except IOError as e:
                 raise e
             self.dada_header = self.input_file.read(4096)
-        elif type == "pcap":
+        elif self.type == "pcap":
             try:
                 self.input_file = pcapy.open_offline(self.fname)
             except IOError as e:
                 raise e
         else:
-            raise HandlerError("Failed: CodifHandler does not know format " + self.type)
+            raise HandlerError("Failed: CodifFile does not know format " + self.type)
 
         if outfile != "":
             try:
@@ -40,8 +74,13 @@ class CodifHandler:
             raise HandlerError("failed set_bpf_filter(): just 'pcap' type supports this function")
 
     def next(self):
-        frame = self.input_file.read(CODIF_PACKET_SIZE)
-        if(len(frame) == CODIF_PACKET_SIZE):
+        if self.type == "pcap":
+            frame = self.input_file.next()[1]
+        elif self.type == "dada":
+            frame = self.input_file.read(CODIF_PACKET_SIZE)
+        else:
+            raise HandlerError("failed next(): input type " + self.type + " is not supported")
+        if(len(frame) >= CODIF_PACKET_SIZE):
             self.packet = CodifPacket(io.BytesIO(frame))
             self.packet_cnt += 1
             return True
@@ -56,8 +95,16 @@ class CodifHandler:
         else:
             self.packet_list.append(packet)
 
+    def remove(self, packet=None, id=None):
+        if packet:
+            self.packet_list.remove(packet)
+        elif id:
+            self.packet_list.pop(id)
+        else:
+            self.packet_list.pop(0)
 
-    def read(self, packets=-1, validate=False, remove=False):
+
+    def read(self, packets=-1, validate=False, add=False):
         old_packet = 0
         if packets != -1:
             bytes = packets*CODIF_PACKET_SIZE
@@ -65,18 +112,19 @@ class CodifHandler:
                 if self.next():
                     if validate:
                         if not self.proof_order(self.packet, old_packet):
-                            print(self.not_order_msg(self.packet, old_packet))
+                            faulty_cnt += 1
                             old_packet = old_packet
-                    if remove:
-                        if not self.proof_order(self.packet, old_packet):
-                            old_packet = old_packet
-                        else:
+                        elif add == True:
                             self.add()
                     else:
                         self.add()
                 else:
                     print("Could not parse packet")
-                bytes = bytes - CODIF_PACKET_SIZE
+                bytes -= CODIF_PACKET_SIZE
+                if self.packet_cnt % 1000 == 0:
+                    print("\rProgress ("+self.packet_cnt+"/"+packets+")")
+                elif self.packet_cnt == packets:
+                    print("done. Summary: "+str(faulty_cnt)+" of "+str(packets)+" were faulty")
         else:
             while self.next():
                 if validate:
@@ -87,17 +135,27 @@ class CodifHandler:
                 else:
                     self.add()
 
-    def write(self, end, start=0):
+    def write(self, start=0, end=None, keep=False):
         if self.output_file:
-            if len(self.packet_list) >= end - start:
+            if end == None:
+                end = len(self.packet_list)
+            if start > end:
+                raise HandlerError("failed write(): start index is greater than end index")
+            if len(self.packet_list) >= end:
                 for packet_idx in range(start,end):
-                    self.output_file.write(packet_list[packet_idx].steam)
+                    self.output_file.write(self.packet_list[packet_idx].stream)
+                if keep:
+                    return
+                self.packet_list.clear()
+            else:
+                raise HandlerError("failed write(): list out of range")
+
         else:
-            raise  HandlerError("failed write(): File not opened, can not write")
+            raise HandlerError("failed write(): File not opened, can not write")
 
 
     # Horrible dirty function
-    @class_method
+    #@class_method
     def proof_order(self, packet, old_packet):
         # initial packet
         if old_packet == 0:
@@ -122,7 +180,7 @@ class CodifHandler:
         return True
 
 
-    @class_method
+    #@class_method
     def not_order_msg(self, packet, old_packet):
         string = ("Packet not in order! Read "+str(self.packet_cnt)+"\nPacket "
             + str(packet.header.frame_number)

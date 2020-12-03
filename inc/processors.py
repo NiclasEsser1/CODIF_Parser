@@ -1,9 +1,6 @@
 from abc import ABC
 
 
-class RawInput:
-    def __init__(self, object, config)
-
 class Processor(ABC):
     def __init__(self, input, output):
         self.input = input
@@ -16,7 +13,7 @@ class Processor(ABC):
 
 
 class Beamformer(Processor):
-    def __init__(self, input, weights, output):
+    def __init__(self, input, output, weights):
         super(Beamformer, self).__init__(input, output, config)
         self.weights = weights
 

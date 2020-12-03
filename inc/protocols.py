@@ -1,19 +1,108 @@
 import struct
-import pcapy
 import socket
 import io
 import json
 import numpy as np
-from abc import ABC, abstractmethod
 # Project dependencies (modules)
-from utils import *
+from inc.utils import *
 
 
-class Packet(ABC):
+class CodifPacket:
     def __init__(self, bytestream):
-        self.stream = bytestream
-        self.header = {"eth" : {}, "ipv4" : {}, "udp" : {}}
+        self.header = CodifHeader(self.stream)
+        self.payload = CodifPayload(self.stream, self.header)
 
+
+class CodifPayload:
+    def __init__(self, stream, header):
+        self.stream = stream
+        self.header = header
+        self.payload = np.zeros(
+            (CODIF_BLOCKS_IN_PACKET, CODIF_CHANNELS_IN_BLOCK, CODIF_POLARIZATION),
+            dtype="complex")
+        self.parse()
+
+
+    def parse(self):
+        for block in range(CODIF_BLOCKS_IN_PACKET):
+            for channel in range(CODIF_CHANNELS_IN_BLOCK):
+                for pol in range(CODIF_POLARIZATION):
+                    self.payload[block, channel, pol] = struct.unpack("!H", self.stream.read(2))[0]
+                    self.payload[block, channel, pol] += struct.unpack("!H", self.stream.read(2))[0] *1j
+
+
+class CodifHeader:
+    def __init__(self, stream, layer=4):
+        self.header = {
+            "eth" : {},
+            "ipv4" : {},
+            "udp" : {},
+            "codif" : {
+                "word"+str(i) : {} for i in range(0,8)
+            }
+        }
+        self.layer = layer
+        self.stream = stream
+        self.nbytes = stream.getbuffer().nbytes
+        self.parse()
+
+    def parse(self):
+        # ETHII layer
+        if self.layer == 1:
+            if self.nbytes >= CODIF_TOTAL_SIZE:
+                self.parse_eth_hdr()
+                self.parse_ipv4_hdr()
+                self.parse_udp_hdr()
+                self.parse_codif_hdr()
+            else:
+                print("Failed to parse CODIF packet from layer "
+                    + str(layer)
+                    + ": byte size ("
+                    + str(self.nbytes)
+                    + "/"
+                    + str(CODIF_TOTAL_SIZE)
+                    +")")
+        # IPV4 layer
+        elif layer == 2:
+            if self.nbytes >= CODIF_TOTAL_SIZE - ETHII_HEADER:
+                self.parse_ipv4_hdr()
+                self.parse_udp_hdr()
+                self.parse_codif_hdr()
+            else:
+                print("Failed to parse CODIF packet from layer "
+                    + str(self.layer)
+                    + ": byte size ("
+                    + str(self.nbytes)
+                    + "/"
+                    + str(CODIF_TOTAL_SIZE)
+                    +")")
+        # UDP layer
+        elif self.layer == 3:
+            if self.nbytes >= CODIF_TOTAL_SIZE - ETHII_HEADER - IPV4_HEADER:
+                self.parse_udp_hdr()
+                self.parse_codif_hdr()
+            else:
+                print("Failed to parse CODIF packet from layer "
+                    + str(self.layer)
+                    + ": byte size ("
+                    + str(self.nbytes)
+                    + "/"
+                    + str(CODIF_TOTAL_SIZE)
+                    +")")
+        # CODFI layer (=4)
+        elif self.layer == 4:
+            if self.nbytes >= CODIF_PACKET_SIZE:
+                self.parse_codif_hdr()
+            else:
+                print("Failed to parse CODIF packet from layer "
+                    + str(self.layer)
+                    + ": byte size ("
+                    + str(self.nbytes)
+                    + "/"
+                    + str(CODIF_HEADER_TOTAL)
+                    +")")
+        else:
+            print("Passed layer not known")
     def parse_eth_hdr(self):
         self.header["eth"]["dest_mac_addr"] = format_mac_address(self.stream.read(6))
         self.header["eth"]["src_mac_addr"] = format_mac_address(self.stream.read(6))
@@ -59,29 +148,6 @@ class Packet(ABC):
         self.dest_port = self.header["udp"]["dest_port"]
         self.length = self.header["udp"]["length"]
         self.check_sum = self.header["udp"]["check_sum"]
-
-    @abstractmethod
-    def parse(self, layer):
-        pass
-
-class CodifPacket:
-    def __init__(self, bytestream):
-        super(CodifPacket, self).__init__(bytestream)
-        self.header = CodifHeader(self.stream)
-        self.payload = Payload(self.stream, self.header)
-
-class CodifHeader:
-    def __init__(self, stream):
-        self.header = {"eth" : {}, "ipv4" : {}, "udp" : {}, "codif" : { "word"+str(i) : {} for i in range(0,8)  }}
-        self.stream = stream
-        # Decide whether or not to parse protocol layer 1-3
-        # if stream.getbuffer().nbytes == CODIF_HEADER_TOTAL:
-        #     self.parse_eth_hdr()
-        #     self.parse_ipv4_hdr()
-        #     self.parse_udp_hdr()
-        self.parse_codif_hdr()
-        # print(json.dumps(self.header, indent=4))
-    def parse(self, args):
 
     def parse_codif_hdr(self):
         header = []
@@ -140,26 +206,3 @@ class CodifHeader:
         self.ext_user_data = self.header["codif"]["word7"]["ext_user_data"]
 
         return 0
-
-
-
-
-
-class CodifPayload:
-    def __init__(self, stream, header):
-        self.stream = stream
-        self.header = header
-        self.payload = np.zeros((CODIF_BLOCKS_IN_PACKET, CODIF_CHANNELS_IN_BLOCK, CODIF_POLARIZATION), dtype="complex")
-        self.read_payload()
-        self.beam_id = 0
-        self.channels = 0
-
-
-    def read_payload(self):
-        # self.beam_id = struct.unpack("!B", self.stream.read(1))[0]
-        # self.channels = struct.unpack("!B", self.stream.read(1))[0]
-        for block in range(CODIF_BLOCKS_IN_PACKET):
-            for channel in range(CODIF_CHANNELS_IN_BLOCK):
-                for pol in range(CODIF_POLARIZATION):
-                    self.payload[block, channel, pol] = struct.unpack("!H", self.stream.read(2))[0]
-                    self.payload[block, channel, pol] += struct.unpack("!H", self.stream.read(2))[0] *1j

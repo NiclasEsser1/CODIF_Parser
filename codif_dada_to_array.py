@@ -16,7 +16,6 @@ if __name__ == '__main__':
     fin = parser.parse_args().fin
     fout = parser.parse_args().fout
     directory = parser.parse_args().dir
-    chunk = int(parser.parse_args().chunk)
 
     file_list = utils.get_file_list(directory, fin)
 
@@ -28,5 +27,3 @@ if __name__ == '__main__':
             handler.read(chunk, True, True)
             handler.write()
             bytes -= chunk*PACKET_SIZE
-            if chunk == -1:
-                break
