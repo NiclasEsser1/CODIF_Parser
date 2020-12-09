@@ -7,22 +7,23 @@ import os
 from argparse import RawTextHelpFormatter
 
 from inc.codif import *
+from inc.constants import *
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='options', formatter_class=RawTextHelpFormatter)
     parser.add_argument('--fname', '-f', action = "store", default = "2020-12-03-22:48:30", dest = "fname", help = "Input file name with directory (filetype '.dada')")
     parser.add_argument('--dir', '-d', action = "store", default = "/beegfsEDD/NESSER/", dest = "dir", help = "Input file name with directory (filetype '.dada')")
     parser.add_argument('--packets', '-p', action = "store", default=-1, dest = "packets", help = "Packets to read from .dada file")
-    parser.add_argument('--threads', '-t', action = "store", default=2, dest = "threads", help = "Packets to read from .dada file")
+    parser.add_argument('--verbose', '-v', action = "store", default=0, dest = "verbose", help = "Packets to read from .dada file")
+    parser.add_argument('--start', '-s', action = "store", default=0, dest = "start", help = "Packets to read from .dada file")
 
     fname = parser.parse_args().fname
     dir = parser.parse_args().dir
     packets = int(parser.parse_args().packets)
-    threads = int(parser.parse_args().threads)
-    file_list = []
-    for root, dirs, files in os.walk(dir):
-        for file in files:
-            if fname in file:
-                file_list.append(os.path.join(root, file))
-    handler = CodifHandler(file_list)
-    handler.validate(packets, threads=threads)
+    verbose = bool(parser.parse_args().verbose)
+    start = int(parser.parse_args().start)
+
+    file = CodifFile(dir + fname)
+    file.seek_packet(start, offset=DADA_HEADER_SIZE)
+    file.read(packets, validate=True, verbose=verbose, skip_payload=False)
+    # file.faulty_packets2json("test")
