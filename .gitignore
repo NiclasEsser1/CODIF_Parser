@@ -2,3 +2,7 @@
 *.txt
 *.pyc
 *.csv
+*.png
+
+#Ignored folders
+results/
