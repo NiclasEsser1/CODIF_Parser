@@ -293,6 +293,7 @@ class CodifHeader:
         self.epoch = header[0] >> 32
         self.frame_id = header[0] & 0x00000000FFFFFFFF
         self.beam_id = (header[2] & 0x000000000000FFFF)
+        self.freq_group = (header[2] & 0x00000000FFFF0000) >> 16
 
     def parse_codif_hdr(self):
         header = []
@@ -570,15 +571,20 @@ class CodifFile:
         else:
             return False
 
-    def next_frame(self, nelements, search_range=64):
+    def next_frame(self, nelements):
         epoch = -1
         frame_id = -1
         frame = []
-        self.frame_cnt += 1
+        zero_cnt = 0
         while self.next(skip_payload=False):
             if self.packet.header.epoch != 0 and epoch == -1:
                 epoch = self.packet.header.epoch
                 frame_id = self.packet.header.frame_id
+            # elif self.packet.header.epoch == 0  and epoch == -1:
+            #     zero_cnt += 1
+            #     if zero_cnt == nelements - 1:
+            #         print("Hi")
+            #         return []
             # start = time.time()
             if epoch == self.packet.header.epoch and frame_id == self.packet.header.frame_id:
                 frame.insert(self.packet.header.beam_id, deepcopy(self.packet))
@@ -835,6 +841,10 @@ class CodifHandler:
     -------
         validate(self, packets, threads, deamon)
             Validates all passed files and visualize the progress within a curses window
+        compute_acm(self, nelements, nsamples=128, nchannel=7, pol=2)
+            Computes ACMs from a given file set. It should be noted that only files of the same channel group can be passed.
+        plot_acm(self, acm, freq, dir="")
+            Plots a passed ACM
         merge()
             not implemented
         clean()
@@ -845,79 +855,109 @@ class CodifHandler:
             Wraps CodifFile.read() into a Queue of Thread objects
     """
     def __init__(self, fin_list, type="dada", fout=""):
-        print("Found " + str(len(fin_list)) + " that matches expression")
+        print("Found " + str(len(fin_list)) + " files that matches expression")
         self.fin_list = fin_list
         self.fout = fout
         self.file_handle = []
         self.numa_list = []
+        self.timestamp = 0
+        self.total_packets = 0
         # For each item in list create a CodifFile object
         for fname in (fin_list):
             self.file_handle.append( CodifFile(fname, type) )
             file = self.file_handle[-1]
             if not file.numa_node in self.numa_list:
                 self.numa_list.append(self.file_handle[-1].numa_node)
+            self.total_packets += self.file_handle[-1].npackets
 
 
-    def compute_acm(self, nelements, nsamples=128, nchannel=7, pol=2):
+    def compute_acm(self, nelements, nsamples=CODIF_BLOCKS_IN_PACKET, nchannel=CODIF_CHANNELS_IN_BLOCK, pol=CODIF_POLARIZATION):
+        """
+        Description:
+        ------------
+            Computes an ACM from all files that are passed to the the CodifHandler.
+        Parameters
+        ----------
+            nelements : int
+                Number of elements which has to be equal to the recorded 'beams'.
+            nsamples : int
+                Number of samples in a datablock (optional). Should not be set for now
+            nchannel : int
+                Number of channels within a channel group (optional). Should not be set for now
+            pol : int
+                Number of polarizations (optional). Should not be set for now
+        Returns:
+        --------
+            Returns calculated ACM as 3D ndarray of size [channels, elements*pol, elements*pol] and frequencies of channels
+        """
+        # Construct necessary numpy array
+        acm = np.zeros((nchannel, nelements*pol, nelements*pol), dtype="complex")
+        data = np.zeros((nelements*pol, nsamples, nchannel), dtype="complex")
 
-        acm_x = np.zeros((nchannel, nelements, nelements), dtype="complex")
-        acm_y = np.zeros((nchannel, nelements, nelements), dtype="complex")
-        data = np.zeros((nelements, nsamples, nchannel, pol), dtype="complex")
+        # Set counters for displaying current progress
         frame_cnt = 0
         uncomplete_cnt = 0
-        for fidx, file in enumerate(self.file_handle):
 
-            print("Working on file " + str(fidx+1) + "/" + str(len(self.file_handle)))
+        # Iterate over all passed CodifFiles
+        for fidx, file in enumerate(self.file_handle):
+            print("\nWorking on file " + str(fidx+1) + "/" + str(len(self.file_handle)))
+            # Further variables (displaying purposes)
+            start = time.time()
+            file_frame_cnt = 0
+
+            # As long as not all data read from current file
             while not file.empty():
-                # start = time.time()
+                # Read the next frame (A frame contains nelements == beams (e.g. 36) CodifPackets )
                 frame = file.next_frame(nelements)
-                # print("elpased time read: ", str(time.time()-start))
-                sys.stdout.write('\r frames: {}/{}, uncomplete: {}'.format(frame_cnt + uncomplete_cnt, file.npackets/nelements, uncomplete_cnt))
+                # Check if we should ignore frame (zeroed packets)
                 if frame != None:
+                    # Check if we should ignore frame (packet loss)
                     if len(frame) == nelements:
+                        # Store the first epoch and frame index to calculate duration of snapshot
                         if frame_cnt == 0:
                             first_epoch = frame[0].header.epoch
                             first_frame_id = frame[0].header.frame_id
+
                         frame_cnt += 1
+                        file_frame_cnt += 1
 
-                        # start = time.time()
+                        # Iterate over each element (remember a frame contains all elements)
                         for element in frame:
-                            idx = element.header.beam_id
-                            data[idx] = element.payload.data
-                        for sample in range(nsamples):
-                            for chan in range(nchannel):
-                                acm_x[chan] +=  np.outer(data[:,sample,chan,0], data[:,sample,chan,0].T)
-                                acm_y[chan] +=  np.outer(data[:,sample,chan,1], data[:,sample,chan,1].T)
-                            acm_x[chan] /= nsamples**2
-                            acm_y[chan] /= nsamples**2
-                        # print("elpased time compute: ", str(time.time()-start))
-
+                            idx = element.header.beam_id # Get beam index which is equal to element index
+                            data[idx] = element.payload.data[:,:,0] # Assign x-pol to numpy array
+                            data[idx + nelements] = element.payload.data[:,:,1] # Assign y-pol to numpy array
+                        # Calculate ACM by dot product over each channel within a channel group
+                        for chan in range(nchannel):
+                            acm[chan] += data[:,:,chan].dot(data[:,:,chan].conj().T)
+                    # Register lost packet
                     else:
                         uncomplete_cnt += 1
+                # Register lost packet
                 else:
                     uncomplete_cnt += 1
+
+                # Display progress
+                sys.stdout.write('\r Total frames: {:d}/{:d}, file frames: {:d}/{:d}, uncomplete: {:d}; duration: {:.2f} s' \
+                    .format(frame_cnt + uncomplete_cnt,
+                        int(self.total_packets/nelements),
+                        file_frame_cnt + uncomplete_cnt,
+                        int(file.npackets/nelements),
+                        uncomplete_cnt,
+                        time.time()-start))
+
+        # Calculate frequencies of channels
+        freq = np.arange(frame[0].header.freq_group, frame[0].header.freq_group+7)
+        # Get last epoch and frame index
         last_epoch = frame[0].header.epoch
         last_frame_id = frame[0].header.frame_id
-        duration = ( (last_epoch - first_epoch) * PAF_EPOCH_PERIOD + last_frame_id - first_frame_id) * CODIF_BLOCKS_IN_PACKET / PAF_SAMPLE_PERIOD
-        print("Duration of record: " +str(duration) + " s")
-        print(last_epoch, first_epoch, last_frame_id, first_frame_id)
-        return acm_x, acm_y
+        # Calculate snapshot duration
+        duration = (last_epoch - first_epoch) \
+            + (last_frame_id - first_frame_id) \
+            * CODIF_BLOCKS_IN_PACKET / PAF_SAMPLE_PERIOD
+        print("\nDuration of record: " +str(duration) + " s")
 
-    def plot_acm(self, acm):
-        fig = plt.figure(figsize=(6, 3.2))
+        return acm, freq
 
-        ax = fig.add_subplot(111)
-        ax.set_title('colorMap')
-        plt.imshow(acm)
-        ax.set_aspect('equal')
-
-        cax = fig.add_axes([0.12, 0.1, 0.78, 0.8])
-        cax.get_xaxis().set_visible(False)
-        cax.get_yaxis().set_visible(False)
-        cax.patch.set_alpha(0)
-        cax.set_frame_on(False)
-        plt.colorbar(orientation='vertical')
-        plt.show()
 
 
     def validate(self, packets=-1, threads=1, deamon=True, display="file"):
