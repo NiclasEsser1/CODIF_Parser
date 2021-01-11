@@ -159,16 +159,25 @@ class CodifHeader:
         therefore accessable without the use of the generated header dictionary
     Methods
     -------
+        update(stream)
+            Updates header data by passed bytestreams.
+
+            update_codif_hdr()
+                Parses changing values of CODIF header without reading static once.
+                Thus this function is much faster than parse_codif_hdr()
+
         parse()
             Parses the bystream to a dictionary.
-        parse_eth_hdr()
-            Parses ethernet protcol header.
-        parse_ipv4_hdr()
-            Parses ipv4 protocol header.
-        parse_udp_hdr()
-            Parses udp protocol header.
-        parse_codif_hdr()
-            Parses codif protocol header.
+            Consists of different inner function (NO ACCESS functions) to parse different protocol layers
+
+            parse_eth_hdr()
+                Innerfunction  Parses ethernet protcol header.
+            parse_ipv4_hdr()
+                Parses ipv4 protocol header.
+            parse_udp_hdr()
+                Parses udp protocol header.
+            parse_codif_hdr()
+                Parses codif protocol header.
     """
     def __init__(self, stream):
         """
@@ -180,14 +189,6 @@ class CodifHeader:
             bytestream : BytesIO
                 bytestream that corresponds to one CODIF packet.
         """
-        self.header = {
-            "eth" : {},
-            "ipv4" : {},
-            "udp" : {},
-            "codif" : {
-                "word"+str(i) : {} for i in range(0,8)
-            }
-        }
         self.stream = stream
         self.nbytes = len(stream.getvalue())#getbuffer().nbytes
         self.parse()
@@ -200,158 +201,244 @@ class CodifHeader:
         s += "freq_group: " + str(self.freq_group) + "\n"
         s += "beam_id: " + str(self.beam_id)
         return s
-    def update(self,stream):
+
+    def update(self, stream):
+        """
+        Description:
+        ------------
+            Updates header data by passed bytestreams. Is essential to update a single packet
+            instead of creating new objects when reading large files.
+        Parameters
+        ----------
+            None
+        """
+        def update_codif_hdr(self):
+            """
+            Description:
+            ------------
+                Used for faster parsing of datastream
+            Parameters
+            ----------
+                None
+            """
+            header = []
+            for i in range(0,8):
+                header.append(struct.unpack("!Q", self.stream.read(8))[0])
+            self.epoch = header[0] >> 32
+            self.frame_id = header[0] & 0x00000000FFFFFFFF
+            self.beam_id = (header[2] & 0x000000000000FFFF)
+            self.freq_group = (header[2] & 0x00000000FFFF0000) >> 16
         self.stream = stream
-        self.parse_codif_hdr_light()
+        self.update_codif_hdr()
 
     def parse(self):
-        # ETHII layer
-        if self.nbytes == CODIF_TOTAL_SIZE:
-                self.parse_eth_hdr()
-                self.parse_ipv4_hdr()
-                self.parse_udp_hdr()
-                self.parse_codif_hdr()
-        # IPV4 layer
-        elif self.nbytes == CODIF_TOTAL_SIZE - ETHII_HEADER:
-                self.parse_ipv4_hdr()
-                self.parse_udp_hdr()
-                self.parse_codif_hdr()
+        """
+        Description:
+        ------------
+            Parses header data from the passed bytestream with the capabilty to parse layers from 1 - 4.
+            Depending on the size of the bytestream the different layers are in- or excluded.
+            Consists of different inner function to parse different protocol layers.
+        Parameters
+        ----------
+            None
+        """
+        def parse_eth_hdr(self):
+            """
+            Description:
+            ------------
+                Parses ETHERNET header data from the passed bytestream (layer 1)
+            Parameters
+            ----------
+                None
+            """
+
+            self.dest_mac_addr = format_mac_address(self.stream.read(6))
+            self.src_mac_addr = format_mac_address(self.stream.read(6))
+            self.frame_length = struct.unpack("!H",self.stream.read(2))[0]
+
+        def parse_ipv4_hdr(self):
+            """
+            Description:
+            ------------
+                Parses IPV4 header data from the passed bytestream (layer 2)
+            Parameters
+            ----------
+                None
+            """
+
+            byte = struct.unpack("!b", self.stream.read(1))[0]
+            self.ver = hex(byte >> 4)
+            self.ihl = hex(byte & 0x0F)
+            self.tos = struct.unpack("!b", self.stream.read(1))[0]
+            self.total_length = struct.unpack("!H",self.stream.read(2))[0]
+            self.identification = struct.unpack("!H",self.stream.read(2))[0]
+
+            byte = struct.unpack("!H",self.stream.read(2))[0]
+            self.flags = hex(byte >> 13)
+            self.fragment_offset = hex(byte << 3)
+            self.ttl = struct.unpack("!b", self.stream.read(1))[0]
+            self.protocol = struct.unpack("!b", self.stream.read(1))[0]
+            self.check_sum = struct.unpack("!H", self.stream.read(2))[0]
+            self.src_addr = socket.inet_ntoa(self.stream.read(4))
+            self.dest_addr = socket.inet_ntoa(self.stream.read(4))
+
+        def parse_udp_hdr(self):
+            """
+            Description:
+            ------------
+                Parses UDP header data from the passed bytestream (layer 3)
+            Parameters
+            ----------
+                None
+            """
+
+            self.src_port = struct.unpack("!H",self.stream.read(2))[0]
+            self.dest_port = struct.unpack("!H",self.stream.read(2))[0]
+            self.length = struct.unpack("!H",self.stream.read(2))[0]
+            self.check_sum = struct.unpack("!H", self.stream.read(2))[0]
+
+        def parse_codif_hdr(self):
+            """
+            Description:
+            ------------
+                Parses CODIF header data from the passed bytestream (layer 4)
+            Parameters
+            ----------
+                None
+            """
+            header = []
+            # Read in the entire header (8x8 Bytes or 8 words)
+            for i in range(0,8):
+                header.append(struct.unpack("!Q", self.stream.read(8))[0])
+            self.invalid = header[0] >> 63
+            self.complex = header[0] >> 62
+            self.epoch = header[0] >> 32
+            self.frame_id = header[0] & 0x00000000FFFFFFFF
+            self.version = header[1] >> 61
+            self.bits_per_sample = (header[1] & 0x1F00000000000000) >> 56
+            self.array_length = (header[1] & 0x00FFFFFF00000000) >> 32
+            self.ref_epoch_period = (header[1] & 0x00000000FC000000) >> 26
+            self.sample_representation = (header[1] & 0x0000000003C00000) >> 22
+            self.unassigned = (header[1] & 0x00000000003F0000) >> 16
+            self.station_id = header[1] & 0x000000000000FFFF
+            self.block_length = header[2] >> 48
+            self.channels_per_thread = (header[2] & 0x0000FFFF00000000) >> 32
+            self.freq_group = (header[2] & 0x00000000FFFF0000) >> 16
+            self.beam_id = (header[2] & 0x000000000000FFFF)
+            self.reserved16 = header[3] >> 48
+            self.period = (header[3] & 0x0000FFFF00000000) >> 32
+            self.reserved32 = (header[3] & 0x00000000FFFFFFFF)
+            self.intervals_per_period = (header[4] & 0xFFFFFFFFFFFFFFFF)
+            self.sync_seq = hex(header[5] >> 32)
+            self.reserved32 = (header[5] & 0x00000000FFFFFFFF)
+            self.ext_data_version = (header[6] >> 56)
+            self.ext_user_data = (header[6] & 0x0FFFFFFFFFFFFFFF)
+            self.ext_user_data = (header[7] & 0xFFFFFFFFFFFFFFFF)
+
+            return 0
+        # CODFI layer (=4)
+        if self.nbytes == CODIF_PACKET_SIZE:
+            self.parse_codif_hdr()
         # UDP layer
         elif self.nbytes == CODIF_TOTAL_SIZE - ETHII_HEADER - IPV4_HEADER:
             self.parse_udp_hdr()
             self.parse_codif_hdr()
-        # CODFI layer (=4)
-        elif self.nbytes >= CODIF_PACKET_SIZE:
-                self.parse_codif_hdr()
+        # IPV4 layer
+        elif self.nbytes == CODIF_TOTAL_SIZE - ETHII_HEADER:
+            self.parse_ipv4_hdr()
+            self.parse_udp_hdr()
+            self.parse_codif_hdr()
+        # ETHII layer
+        elif self.nbytes == CODIF_TOTAL_SIZE:
+            self.parse_eth_hdr()
+            self.parse_ipv4_hdr()
+            self.parse_udp_hdr()
+            self.parse_codif_hdr()
         else:
-            print("Failed to parse CODIF packet from layer "
-                + str(layer)
-                + ": byte size ("
+            print("Failed to parse CODIF packet with byte size ("
                 + str(self.nbytes)
                 + "/"
                 + str(CODIF_TOTAL_SIZE)
                 +")")
 
-    def parse_eth_hdr(self):
-        self.header["eth"]["dest_mac_addr"] = format_mac_address(self.stream.read(6))
-        self.header["eth"]["src_mac_addr"] = format_mac_address(self.stream.read(6))
-        self.header["eth"]["frame_length"] = struct.unpack("!H",self.stream.read(2))[0]
-        self.dest_mac_addr = self.header["eth"]["dest_mac_addr"]
-        self.src_mac_addr = self.header["eth"]["src_mac_addr"]
-        self.frame_length = self.header["eth"]["frame_length"]
+    def as_dict(self):
 
-    def parse_ipv4_hdr(self):
-        byte = struct.unpack("!b", self.stream.read(1))[0]
-        self.header["ipv4"]["ver"] = hex(byte >> 4)
-        self.header["ipv4"]["ihl"] = hex(byte & 0x0F)
-        self.header["ipv4"]["tos"] = struct.unpack("!b", self.stream.read(1))[0]
-        self.header["ipv4"]["total_length"] = struct.unpack("!H",self.stream.read(2))[0]
-        self.header["ipv4"]["identification"] = struct.unpack("!H",self.stream.read(2))[0]
-        byte = struct.unpack("!H",self.stream.read(2))[0]
-        self.header["ipv4"]["flags"] = hex(byte >> 13)
-        self.header["ipv4"]["fragment_offset"] = hex(byte << 3)
-        self.header["ipv4"]["ttl"] = struct.unpack("!b", self.stream.read(1))[0]
-        self.header["ipv4"]["protocol"] = struct.unpack("!b", self.stream.read(1))[0]
-        self.header["ipv4"]["check_sum"] = struct.unpack("!H", self.stream.read(2))[0]
-        self.header["ipv4"]["src_addr"] = socket.inet_ntoa(self.stream.read(4))
-        self.header["ipv4"]["dest_addr"] = socket.inet_ntoa(self.stream.read(4))
-        self.ver = self.header["ipv4"]["ver"]
-        self.ihl = self.header["ipv4"]["ihl"]
-        self.tos = self.header["ipv4"]["tos"]
-        self.total_length = self.header["ipv4"]["total_length"]
-        self.identification = self.header["ipv4"]["identification"]
-        self.flags = self.header["ipv4"]["flags"]
-        self.fragment_offset = self.header["ipv4"]["fragment_offset"]
-        self.ttl = self.header["ipv4"]["ttl"]
-        self.protocol = self.header["ipv4"]["protocol"]
-        self.check_sum = self.header["ipv4"]["check_sum"]
-        self.src_addr = self.header["ipv4"]["src_addr"]
-        self.dest_addr = self.header["ipv4"]["dest_addr"]
-
-    def parse_udp_hdr(self):
-        self.header["udp"]["src_port"] = struct.unpack("!H",self.stream.read(2))[0]
-        self.header["udp"]["dest_port"] = struct.unpack("!H",self.stream.read(2))[0]
-        self.header["udp"]["length"] = struct.unpack("!H",self.stream.read(2))[0]
-        self.header["udp"]["check_sum"] = struct.unpack("!H", self.stream.read(2))[0]
-        self.src_port = self.header["udp"]["src_port"]
-        self.dest_port = self.header["udp"]["dest_port"]
-        self.length = self.header["udp"]["length"]
-        self.check_sum = self.header["udp"]["check_sum"]
-
-    def parse_codif_hdr_light(self):
         """
         Description:
         ------------
-            Used for faster parsing of datastream
-        Parameters
+            Creates a dictionary based on parsed header information
+        Parameters:
         ----------
             None
+        Return:
+        -------
+            Returns a dctionary containing header information
         """
-        header = []
-        for i in range(0,8):
-            header.append(struct.unpack("!Q", self.stream.read(8))[0])
-        self.epoch = header[0] >> 32
-        self.frame_id = header[0] & 0x00000000FFFFFFFF
-        self.beam_id = (header[2] & 0x000000000000FFFF)
-        self.freq_group = (header[2] & 0x00000000FFFF0000) >> 16
+        d = {
+            "eth" : {},
+            "ipv4" : {},
+            "udp" : {},
+            "codif" : {
+                "word"+str(i) : {} for i in range(0,8)
+            }
+        }
 
-    def parse_codif_hdr(self):
-        header = []
-        # Read in the entire header (8x8 Bytes or 8 words)
-        for i in range(0,8):
-            header.append(struct.unpack("!Q", self.stream.read(8))[0])
-        self.header["codif"]["word0"]["invalid"] = header[0] >> 63
-        self.header["codif"]["word0"]["complex"] = header[0] >> 62
-        self.header["codif"]["word0"]["epoch"] = header[0] >> 32
-        self.header["codif"]["word0"]["frame_id"] = header[0] & 0x00000000FFFFFFFF
-        self.header["codif"]["word1"]["version"] = header[1] >> 61
-        self.header["codif"]["word1"]["bits_per_sample"] = (header[1] & 0x1F00000000000000) >> 56
-        self.header["codif"]["word1"]["array_length"] = (header[1] & 0x00FFFFFF00000000) >> 32
-        self.header["codif"]["word1"]["ref_epoch_period"] = (header[1] & 0x00000000FC000000) >> 26
-        self.header["codif"]["word1"]["sample_representation"] = (header[1] & 0x0000000003C00000) >> 22
-        self.header["codif"]["word1"]["unassigned"] = (header[1] & 0x00000000003F0000) >> 16
-        self.header["codif"]["word1"]["station_id"] = header[1] & 0x000000000000FFFF
-        self.header["codif"]["word2"]["block_length"] = header[2] >> 48
-        self.header["codif"]["word2"]["channels_per_thread"] = (header[2] & 0x0000FFFF00000000) >> 32
-        self.header["codif"]["word2"]["freq_group"] = (header[2] & 0x00000000FFFF0000) >> 16
-        self.header["codif"]["word2"]["beam_id"] = (header[2] & 0x000000000000FFFF)
-        self.header["codif"]["word3"]["reserved16"] = header[3] >> 48
-        self.header["codif"]["word3"]["period"] = (header[3] & 0x0000FFFF00000000) >> 32
-        self.header["codif"]["word3"]["reserved32"] = (header[3] & 0x00000000FFFFFFFF)
-        self.header["codif"]["word4"]["intervals_per_period"] = (header[4] & 0xFFFFFFFFFFFFFFFF)
-        self.header["codif"]["word5"]["sync_seq"] = hex(header[5] >> 32)
-        self.header["codif"]["word5"]["reserved32"] = (header[5] & 0x00000000FFFFFFFF)
-        self.header["codif"]["word6"]["ext_data_version"] = (header[6] >> 56)
-        self.header["codif"]["word6"]["ext_user_data"] = (header[6] & 0x0FFFFFFFFFFFFFFF)
-        self.header["codif"]["word7"]["ext_user_data"] = (header[7] & 0xFFFFFFFFFFFFFFFF)
+        # ETHII layer
+        if self.nbytes == CODIF_TOTAL_SIZE:
+            d["eth"]["dest_mac_addr"] = self.dest_mac_addr
+            d["eth"]["src_mac_addr"] = self.src_mac_addr
+            d["eth"]["frame_length"] = self.frame_length
 
+        # IPV4 layer
+        if self.nbytes >= CODIF_TOTAL_SIZE - ETHII_HEADER:
+            d["ipv4"]["ver"] = self.ver
+            d["ipv4"]["ihl"] = self.ihl
+            d["ipv4"]["tos"] = self.tos
+            d["ipv4"]["total_length"] = self.total_length
+            d["ipv4"]["identification"] = self.identification
+            d["ipv4"]["flags"] = self.flags
+            d["ipv4"]["fragment_offset"] = self.fragment_offset
+            d["ipv4"]["ttl"] = self.ttl
+            d["ipv4"]["protocol"] = self.protocol
+            d["ipv4"]["check_sum"] = self.check_sum
+            d["ipv4"]["src_addr"] = self.src_addr
+            d["ipv4"]["dest_addr"] = self.dest_addr
 
-        self.invalid = self.header["codif"]["word0"]["invalid"]
-        self.complex = self.header["codif"]["word0"]["complex"]
-        self.epoch = self.header["codif"]["word0"]["epoch"]
-        self.frame_id = self.header["codif"]["word0"]["frame_id"]
-        self.version = self.header["codif"]["word1"]["version"]
-        self.bits_per_sample = self.header["codif"]["word1"]["bits_per_sample"]
-        self.array_length = self.header["codif"]["word1"]["array_length"]
-        self.ref_epoch_period = self.header["codif"]["word1"]["ref_epoch_period"]
-        self.sample_representation = self.header["codif"]["word1"]["sample_representation"]
-        self.unassigned = self.header["codif"]["word1"]["unassigned"]
-        self.station_id = self.header["codif"]["word1"]["station_id"]
-        self.block_length = self.header["codif"]["word2"]["block_length"]
-        self.channels_per_thread = self.header["codif"]["word2"]["channels_per_thread"]
-        self.freq_group = self.header["codif"]["word2"]["freq_group"]
-        self.beam_id = self.header["codif"]["word2"]["beam_id"]
-        self.reserved16 = self.header["codif"]["word3"]["reserved16"]
-        self.period = self.header["codif"]["word3"]["period"]
-        self.reserved32 = self.header["codif"]["word3"]["reserved32"]
-        self.intervals_per_period = self.header["codif"]["word4"]["intervals_per_period"]
-        self.sync_seq = self.header["codif"]["word5"]["sync_seq"]
-        self.reserved32 = self.header["codif"]["word5"]["reserved32"]
-        self.ext_data_version = self.header["codif"]["word6"]["ext_data_version"]
-        self.ext_user_data = self.header["codif"]["word6"]["ext_user_data"]
-        self.ext_user_data = self.header["codif"]["word7"]["ext_user_data"]
+        # UDP layer
+        if self.nbytes >= CODIF_TOTAL_SIZE - ETHII_HEADER - IPV4_HEADER:
+            d["udp"]["src_port"] = self.src_port
+            d["udp"]["dest_port"] = self.dest_port
+            d["udp"]["length"] = self.length
+            d["udp"]["check_sum"] = self.check_sum
 
-        return 0
+        # CODIF layer
+        if self.nbytes >= CODIF_PACKET_SIZE:
+            d["codif"]["word0"]["invalid"] = self.invalid
+            d["codif"]["word0"]["complex"] = self.complex
+            d["codif"]["word0"]["epoch"] = self.epoch
+            d["codif"]["word0"]["frame_id"] = self.frame_id
+            d["codif"]["word1"]["version"] = self.version
+            d["codif"]["word1"]["bits_per_sample"] = self.bits_per_sample
+            d["codif"]["word1"]["array_length"] = self.array_length
+            d["codif"]["word1"]["ref_epoch_period"] = self.ref_epoch_period
+            d["codif"]["word1"]["sample_representation"] = self.sample_representation
+            d["codif"]["word1"]["unassigned"] = self.unassigned
+            d["codif"]["word1"]["station_id"] = self.station_id
+            d["codif"]["word2"]["block_length"] = self.block_length
+            d["codif"]["word2"]["channels_per_thread"] = self.channels_per_thread
+            d["codif"]["word2"]["freq_group"] = self.freq_group
+            d["codif"]["word2"]["beam_id"] = self.beam_id
+            d["codif"]["word3"]["reserved16"] = self.reserved16
+            d["codif"]["word3"]["period"] = self.period
+            d["codif"]["word3"]["reserved32"] = self.reserved32
+            d["codif"]["word4"]["intervals_per_period"] = self.intervals_per_period
+            d["codif"]["word5"]["sync_seq"] = self.sync_seq
+            d["codif"]["word5"]["reserved32"] = self.reserved32
+            d["codif"]["word6"]["ext_data_version"] = self.ext_data_version
+            d["codif"]["word6"]["ext_user_data"] = self.ext_user_data
+            d["codif"]["word7"]["ext_user_data"] = self.ext_user_data
+
+        return d
 
 class CodifFile:
     """
@@ -431,7 +518,8 @@ class CodifFile:
         self.stream_position = 0
         self.random_payload = ""
         self.frame_cnt = 0
-        self.numa_node = self.get_numa_name()
+        self.node_name = self.get_node_name()
+        self.empty_payload = empty_string(CODIF_PAYLOAD) # Used if payload needs to be padded
         # The passed file is a .dada file
         if self.type == "dada":
             # Try to open the file
@@ -461,12 +549,35 @@ class CodifFile:
             raise HandlerError("Failed: CodifFile does not know format " + self.type)
 
     def empty(self):
+        """
+        Description:
+        ------------
+            Checks if filestream pointer reached the end of file
+        Parameters
+        ----------
+            None
+        Returns:
+        --------
+            Returns True if end is reached otherwise false
+        """
         if self.file.tell() >= self.endlocation:
             return True
         else:
             return False
 
-    def get_numa_name(self):
+    def get_node_name(self):
+        """
+        Description:
+        ------------
+            Get name of numa node.
+            ! Not very stable method, since the numa node name has to be in the file dirctory which is passed to __init__() !
+        Parameters
+        ----------
+            None
+        Returns:
+        --------
+            String containing numa node name
+        """
         fl = self.fname.split('/')
         for f in fl:
             if "numa" in f:
@@ -537,58 +648,68 @@ class CodifFile:
         ----------
             skip_payload : bool
                 If set to True the payload is not read from the file
+            add : bool
+                If set to True, each packet is stored to list (CAUTION when reading huge files)
         Returns:
         --------
             True on success and False on failure
         """
+        # Read packet from pcap file
         if self.type == "pcap":
             # Pcap library directly supports frame collecting
-            frame = self.file.next()[1]
+            packet = self.file.next()[1]
+        # Read packet from dada file
         elif self.type == "dada":
             # DADA frame collection is byte based
             if skip_payload:
-                frame = self.file.read(CODIF_HEADER) # Just read the header
-                if self.random_payload == "":
-                    self.random_payload = gen_payload(CODIF_PAYLOAD)
-                frame += self.random_payload
+                packet = self.file.read(CODIF_HEADER) # Just read the header
+                packet += self.empty_payload
                 self.seek(CODIF_PAYLOAD, 1)    # And skip the payload
             else:
-                # start = time.time()
-                frame = self.file.read(CODIF_PACKET_SIZE)
-                # print("Packet read" + str(time.time() - start))
+                packet = self.file.read(CODIF_PACKET_SIZE)
 
-        if len(frame) >= CODIF_PACKET_SIZE:
+        # Check if we have enough bytes to create a packet
+        if len(packet) >= CODIF_PACKET_SIZE:
+            # If desired we can add packets to list
             if add == True or self.packet_cnt == 1:
-                self.packet = CodifPacket(io.BytesIO(frame), skip_payload)
+                self.packet = CodifPacket(io.BytesIO(packet), skip_payload)
                 self.add()
-            # Reuse object
+            # Reuse object by just updateing payload and header data
             else:
-                # start = time.time()
-                self.packet.update(io.BytesIO(frame), skip_payload)
-                # print("Packet update" + str(time.time() - start))
+                self.packet.update(io.BytesIO(packet), skip_payload)
             self.packet_cnt += 1
             return True
         else:
             return False
 
-    def next_frame(self, nelements):
+    def next_frame(self, nelements=36, skip_payload=False):
+        """
+        Description:
+        ------------
+            Collects a dataframe.
+            In terms of CODIF a dataframe refers to all received packet at same epoch and frame_id, but with a different beam_id (0 - 35).
+        Parameters
+        ----------
+            nelements : int
+                Number of elements (beam_id).
+            skip_payload : bool
+                If set to True the payload is not read from the file
+            add : bool
+                If set to True, each packet is stored to list (CAUTION when reading huge files)
+        Returns:
+        --------
+            True on success and False on failure
+        """
         epoch = -1
         frame_id = -1
         frame = []
         zero_cnt = 0
-        while self.next(skip_payload=False):
+        while self.next(skip_payload):
             if self.packet.header.epoch != 0 and epoch == -1:
                 epoch = self.packet.header.epoch
                 frame_id = self.packet.header.frame_id
-            # elif self.packet.header.epoch == 0  and epoch == -1:
-            #     zero_cnt += 1
-            #     if zero_cnt == nelements - 1:
-            #         print("Hi")
-            #         return []
-            # start = time.time()
             if epoch == self.packet.header.epoch and frame_id == self.packet.header.frame_id:
                 frame.insert(self.packet.header.beam_id, deepcopy(self.packet))
-            # print("Copy packet : " +str(time.time()-start) )
             if self.packet.header.beam_id == nelements-1:
                 if len(frame) == None:
                     frame = []
@@ -748,7 +869,7 @@ class CodifFile:
         """
         Description:
         ------------
-            Proofs if two packets are in order or not
+            Proofs if two packets are in order or not.
         Parameters
         ----------
             packet : CodifPacket
@@ -787,7 +908,7 @@ class CodifFile:
         if packet.header.beam_id == 0 and packet.header.epoch==0 and packet.header.frame_id == 0:
             self.zeroed_cnt += 1
         else:
-            self.faulty_list.append([self.packet_cnt, deepcopy(packet)])
+            #self.faulty_list.append([self.packet_cnt, deepcopy(packet)])
             self.faulty_cnt += 1
 
     def not_order_msg(self, packet, ref_beam, ref_frame, ref_epoch):
@@ -866,8 +987,8 @@ class CodifHandler:
         for fname in (fin_list):
             self.file_handle.append( CodifFile(fname, type) )
             file = self.file_handle[-1]
-            if not file.numa_node in self.numa_list:
-                self.numa_list.append(self.file_handle[-1].numa_node)
+            if not file.node_name in self.numa_list:
+                self.numa_list.append(self.file_handle[-1].node_name)
             self.total_packets += self.file_handle[-1].npackets
 
 
@@ -1002,7 +1123,7 @@ class CodifHandler:
                 if f_expr in file.fname:
                     occurence[i] += 1
                     sub_handle[i].append(file)
-            idx = self.numa_list.index(file.numa_node)
+            idx = self.numa_list.index(file.node_name)
             total_pkt_numa_num[idx] += file.npackets
             total_pkt_num += int(file.npackets)
 
@@ -1135,7 +1256,7 @@ class CodifHandler:
                             i = r-2
                             if i < len(sub):
                                 file = sub[i]
-                                idx = self.numa_list.index(file.numa_node)
+                                idx = self.numa_list.index(file.node_name)
                                 cur_dif = file.packet_cnt-last_pkt_cnt[idx]
                                 cur_time = time.time()
                                 cur_rate = cur_dif/(cur_time-last_time[idx])
@@ -1176,6 +1297,7 @@ class CodifHandler:
 
     def to_array(self):
         pass
+        
     def to_csv(self, dir, fname):
         # Store results in pandas dataframe
         print("Exporting results to " + dir + fname)

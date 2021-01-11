@@ -13,7 +13,7 @@ def get_file_list(dir, fname_expr="*"):
     key_expr = dir + fname_expr
     return sorted(glob.glob(os.path.join("", key_expr)))
 
-def gen_payload(bytes):
+def empty_string(bytes):
     rpay = ""
     for i in range(bytes):
         rpay += " "
@@ -37,7 +37,7 @@ def create_dir(dir):
         else:
             sys.exit(0)
 
-def plot_acm(acm, freq, timestamp=0, yaxis=2, dir=""):
+def plot_acm(acm, freq, timestamp=0, yaxis=2, dir="", elements=[]):
     nchannel = len(freq)
     if nchannel%2:
         nplotx = int(np.floor((nchannel+1)/yaxis))
