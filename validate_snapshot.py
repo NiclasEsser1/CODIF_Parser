@@ -1,8 +1,46 @@
-#!/usr/local/bin/python2.7
+'''
+Institution: Max-Planck Institution for Radioastronomy (MPIfR-Bonn)
+    Auf dem Huegel 69, Bonn, Germany
 
+Author: Niclas Eesser <nesser@mpifr-bonn.mpg.de>
 
-import json
-import curses
+Description
+-----------
+    This script validates data of a whole snapshots by reading CODIF meta data.
+    It basically proofs the correct order of received packets. Due to a UDP based
+    communication packet loss may occur. Packets that are missing are recorded as
+    faulty packets. Also so-called zero packets occur, which has no data in it, but
+    were still recorded and written to disk.
+
+Preliminaries
+-------------
+    The script expects a predefined folder structure in which the raw data are stored:
+    root_dir/
+    |_______numa0/
+    |        |______raw_file1.dada
+    |        |______raw_file2.dada
+    :        :
+    |        |______raw_fileN.dada
+    |_______numa1/
+    |        |______raw_file1.dada
+    |        |______raw_file2.dada
+    :        :
+    |        |______raw_fileN.dada
+    :
+    |_______numaN/
+             |______raw_file1.dada
+             |______raw_file2.dada
+             :
+             |______raw_fileN.dada
+    All files within the folder structure are automatically searched, but it is important
+    that sub-folders have the name 'numa' + ID
+Program flow
+------------
+    0. Parse user arguments
+    1. Create a CodifHandle object with all detected files
+    2. Validates all deteced files and monitors the progress. (Validating recorded data of snapshots with 1TB size takes a while)
+    3. Save result to a csv file
+'''
 import argparse
 import os
 import re
@@ -24,9 +62,10 @@ if __name__ == '__main__':
     packets = int(parser.parse_args().packets)
     threads = int(parser.parse_args().threads)
     output = parser.parse_args().output
+
     file_list = []
     fname_list = []
-    cnt = 0
+
     for root, dirs, files in os.walk(dir):
         for file in files:
             if fname in file:

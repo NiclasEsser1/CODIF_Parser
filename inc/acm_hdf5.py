@@ -28,6 +28,7 @@ import h5py
 from collections import OrderedDict
 
 from inc.constants import *
+from inc.utils import *
 
 
 class ACMFile(h5py.File):
@@ -62,13 +63,8 @@ class ACMFile(h5py.File):
         # write_modes = ['r+', 'w', 'w-', 'x', 'a']
 
         super(ACMFile, self).__init__(name, mode, **kwds)
-        self.prefix = ''
-        if u'CCcount' in self.keys():
-            self.prefix = 'CC'
-        elif u'ACMcount' in self.keys():
-            self.prefix = 'ACM'
-        elif mode in ["w", "w-", "x"]:
-            self.prefix = 'ACM'
+        self.prefix = 'ACM'
+        if mode in ["w", "w-", "x"]:
             print("Created HDF5 file " + name)
             return
 
@@ -92,27 +88,44 @@ class ACMFile(h5py.File):
         # if acm_stats:
         #    self.acmcheck = ACMcheck(self)
 
-        self.acm = self.load_scale_acm(self.count_scale)
+        self.acm = acm = np.asarray(self[self.prefix + 'data'][...], dtype=np.complex64)
+        if self.count_scale:
+            self.load_scale_acm()
 
         if acm_stats:
             pass
         #    self.acmcheck.to_file(os.path.dirname(self.filename))
-    def write(self, dict):
-        print("Writing data to HDF5 File")
-        self.create_dataset(self.prefix + 'count', )
-        self.create_dataset(self.prefix + 'data', )
-        self.create_dataset(self.prefix + 'status', )
-        self.create_dataset('azimuth', )
-        self.create_dataset('bat', )
-        self.create_dataset('decJ2000', )
-        self.create_dataset('elevation', )
-        self.create_dataset('onSource', )
-        self.create_dataset('raJ2000', )
-        self.create_dataset('rollAngle', )
-        self.create_dataset('skyFrequency', )
 
 
-    def make_freq_ind_dict(self):
+    def create_from_dict(self, dictionary, group='/'):
+        base = self['/']
+        for key, val in dictionary.items():
+
+            if isinstance(val['dtype'], dict):
+                val['dtype'] = np.dtype(val['dtype'])
+            if val['kind'] == 'attribute':
+                self[group].attrs.create(name=key, data=val['value'], shape=val['space'], dtype=val['dtype'])
+            elif val['kind'] == 'dataset':
+                self.create_dataset(key, shape=val['space'], dtype=val['dtype'], data=val['value'])
+
+                if 'attributes' in val.keys():
+                    self.create_from_dict(val['attributes'], key)
+
+    def create_empty(self):
+        self.create_dataset(self.prefix + 'count', (CODIF_CHANNELS_IN_BLOCK+1, PAF_N_FREQ_GROUP), dtype='uint32')
+        self.create_dataset(self.prefix + 'data', (CODIF_CHANNELS_IN_BLOCK+1, PAF_N_FREQ_GROUP, N_ELEMENTS, N_ELEMENTS), dtype=np.complex64)
+        self.create_dataset(self.prefix + 'status', (CODIF_CHANNELS_IN_BLOCK+1, PAF_N_FREQ_GROUP), dtype='int32')
+        self.create_dataset('azimuth', (CODIF_CHANNELS_IN_BLOCK+1,), dtype='double')
+        self.create_dataset('bat', (CODIF_CHANNELS_IN_BLOCK+1,), dtype='uint64')
+        self.create_dataset('decJ2000', (CODIF_CHANNELS_IN_BLOCK+1,), dtype='double')
+        self.create_dataset('elevation', (CODIF_CHANNELS_IN_BLOCK+1,), dtype='double')
+        self.create_dataset('onSource', (CODIF_CHANNELS_IN_BLOCK+1,), dtype='int8')
+        self.create_dataset('raJ2000', (CODIF_CHANNELS_IN_BLOCK+1,), dtype='double')
+        self.create_dataset('rollAngle', (CODIF_CHANNELS_IN_BLOCK+1,), dtype='double')
+        self.create_dataset('skyFrequency', (CODIF_CHANNELS_IN_BLOCK+1, PAF_N_FREQ_GROUP), dtype='double')
+
+
+    def make_freq_ind_dict(self, flagged=True):
         """
         Make a dictionary containing cycle and frequency indices for ACMs of a
         particular sky frequency.  Ignores cycles with errors or zero/low integration
@@ -129,11 +142,10 @@ class ACMFile(h5py.File):
         """
 
         sky_frequency = self['skyFrequency'][...]
-        acm_status = self[self.prefix + 'status'][...]
+        self.acm_status = self[self.prefix + 'status'][...]
 
         # extract a sorted list of unique frequencies in the acm file
         freq_vec = sorted(set(sky_frequency.flatten()))
-
         freq_dict = OrderedDict()
         for freq_val in freq_vec:
             # noinspection PyTypeChecker
@@ -144,30 +156,40 @@ class ACMFile(h5py.File):
             # only the first cycle of the first scan is corrupt if using SBs
             # to observe
             # TODO: why are we ditching the first cycle ASKAPTOS-3929
-            if ind_cyc[0] == 0:
-                ind_cyc = np.delete(ind_cyc, 0)
-                ind_freq = np.delete(ind_freq, 0)
+            # if ind_cyc[0] == 0:
+            #     ind_cyc = np.delete(ind_cyc, 0)
+            #     ind_freq = np.delete(ind_freq, 0)
                 # logger.debug("Dropped first ACM cycle ind_cyc={}, ind_freq={}".format(ind_cyc, ind_freq))
 
             # now remove cycles with errors and zero/low integration counts
-            for i_meas, i_cyc, i_freq in zip(range(len(ind_cyc)), ind_cyc, ind_freq):
-                if acm_status[i_cyc, i_freq] != 0:
-                    # logger.warning("Bad status for ACM i_cyc={}, i_freq={} at {} MHz".format(i_cyc, i_freq, freq_val))
-                    ind_cyc = np.delete(ind_cyc, i_meas)
-                    ind_freq = np.delete(ind_freq, i_meas)
-                    # logger.debug("Remaining ACMs at {} MHz:  ind_cyc={}, ind_freq={}".format(freq_val, ind_cyc, ind_freq))
-                elif self.acm_count[i_cyc, i_freq] <= 10:
-                    # logger.warning("Low integration count of {} for ACM i_cyc={}, i_freq={} at {} MHz".format(
-                        #self.acm_count[i_cyc, i_freq], i_cyc, i_freq, freq_val))
-                    ind_cyc = np.delete(ind_cyc, i_meas)
-                    ind_freq = np.delete(ind_freq, i_meas)
-                    # logger.debug("Remaining ACMs at {} MHz:  ind_cyc={}, ind_freq={}".format(freq_val, ind_cyc, ind_freq))
+            if flagged:
+                for i_meas, i_cyc, i_freq in zip(range(len(ind_cyc)), ind_cyc, ind_freq):
+                    if self.acm_status[i_cyc, i_freq] != 0:
+                        # logger.warning("Bad status for ACM i_cyc={}, i_freq={} at {} MHz".format(i_cyc, i_freq, freq_val))
+                        ind_cyc = np.delete(ind_cyc, i_meas)
+                        ind_freq = np.delete(ind_freq, i_meas)
+                        # logger.debug("Remaining ACMs at {} MHz:  ind_cyc={}, ind_freq={}".format(freq_val, ind_cyc, ind_freq))
+                    elif self.acm_count[i_cyc, i_freq] <= 10:
+                        # logger.warning("Low integration count of {} for ACM i_cyc={}, i_freq={} at {} MHz".format(
+                            #self.acm_count[i_cyc, i_freq], i_cyc, i_freq, freq_val))
+                        ind_cyc = np.delete(ind_cyc, i_meas)
+                        ind_freq = np.delete(ind_freq, i_meas)
+                        # logger.debug("Remaining ACMs at {} MHz:  ind_cyc={}, ind_freq={}".format(freq_val, ind_cyc, ind_freq))
 
             # only add a particular frequency if there is valid data at that frequency:
             if len(ind_cyc) > 0 and len(ind_freq) > 0:
                 freq_dict[freq_val] = (ind_cyc, ind_freq)
 
         return freq_dict
+
+    def reshape_to_3d(self, element_list=ELEMENT_LIST, flagged=True):
+        freq_dict = self.make_freq_ind_dict(flagged)
+        # data = np.zeros((len(freq_dict)), dtype=np.complex64)
+        data = [0 for __ in range(len(freq_dict))]
+        for idx, (key, value) in enumerate(freq_dict.items()):
+            data[idx] = select_from_list(self.acm[value[0], value[1]],element_list)[0]
+
+        return np.asarray(data, dtype=np.complex64)
 
     # todo: make acm a parameter and optionally run count_scale on it at init time?
     # todo: this might be a good spot to calculate the matrix quality stats as the data is traversed
@@ -178,7 +200,7 @@ class ACMFile(h5py.File):
 
         :param bool count_scale: if true normalise ACMs by integration count
         """
-        acm = self[self.prefix + 'data'][...]
+
 
         if count_scale:
             for i_cyc in range(self.n_cycles):
@@ -206,7 +228,7 @@ class ACMFile(h5py.File):
 
         n_freq_reps = self.n_cycles / 8
 
-        ccv = np.zeros((n_freq_reps, self.n_freq, N_DBE_PORTS), np.complex)
+        ccv = np.zeros((n_freq_reps, self.n_freq, N_ELEMENTS), np.complex)
         # cnt_cc = np.zeros((n_freq_reps, len(ccfile.freq)))
         for i_freq, freqMHz in enumerate(self.freq):
             ind_cyc, ind_freq = self.freq_dict[freqMHz]
@@ -313,7 +335,7 @@ class ACMFile(h5py.File):
     def average_acm(self, guard_cyc, num_cyc_avg):
 
         # for all frequencies, average the acm and store the ODC
-        averaged_acm = np.zeros((len(self.freq), N_DBE_PORTS, N_DBE_PORTS), np.complex64)
+        averaged_acm = np.zeros((len(self.freq), N_ELEMENTS, N_ELEMENTS), np.complex64)
         for i_freq, freqMHz in enumerate(self.freq):
             ind_cyc, ind_freq = self.freq_dict[freqMHz]
 
@@ -438,3 +460,154 @@ class ACMFile(h5py.File):
                         #.format(odc_pow_dB, threshold))
 
         return odc_working, port_working, paf2odc_ratio_db_per_port
+
+# Added by Niclas Esser
+def data_to_dict(acm, sky_frequency, frames, flagged, odir="", antenna=1, sbid=9999, site='pk', schedulingblock=0, band='FILTER_1450', fc=1340, comment='No comment', azimuth=90.0, elevation=90.0, bat=5103284240024128, decj2000=42.2361, raj2000=316, roll_angle=90.0, on_source=1):
+    acm_dict = {
+        'antenna' : {
+            'kind' : 'attribute',
+            'dtype' : 'int32',
+            'space' : None,
+            'value' : antenna
+        },
+        'scan' : {
+            'kind' : 'attribute',
+            'dtype' : 'int32',
+            'space' : None,
+            'value' : sbid
+        },
+        'site' : {
+            'kind' : 'attribute',
+            'dtype' : 'S3',
+            'space' : None,
+            'value' : site
+        },
+        'schedulingblock' : {
+            'kind' : 'attribute',
+            'dtype' : 'int32',
+            'space' : None,
+            'value' : schedulingblock
+        },
+        'ACMcount' : {
+            'kind' : 'dataset',
+            'dtype' : 'uint32',
+            'space' : (1+CODIF_CHANNELS_IN_BLOCK, PAF_N_FREQ_GROUP),
+            'value' : frames,
+        },
+        'ACMdata' : {
+            'kind' : 'dataset',
+            'dtype' : {
+                'names' : ['r', 'i'],
+                'formats' : ['<f4', '<f4']
+             },
+            'space' : (1+CODIF_CHANNELS_IN_BLOCK, PAF_N_FREQ_GROUP, N_ELEMENTS, N_ELEMENTS),
+            'value' : acm,
+            'attributes' : {
+                'DIMENSION_LABELS' : {
+                    'kind' : 'attribute',
+                    'dtype' : 'S16',
+                    'space' : (4,),
+                    'value' : np.asarray(["Measurement Time", "Sky Frequency", "PAF Port X", "PAF Port Y"]),
+                },
+                'band' : {
+                    'kind' : 'attribute',
+                    'dtype' : 'S12',
+                    'space' : None,
+                    'value' : band,
+                },
+                'centreFrequency' : {
+                    'kind' : 'attribute',
+                    'dtype' : 'int64',
+                    'space' : None,
+                    'value' : fc,
+                },
+                'comment' : {
+                    'kind' : 'attribute',
+                    'dtype' : 'S11',
+                    'space' : None,
+                    'value' : comment,
+                },
+                'filepath' : {
+                    'kind' : 'attribute',
+                    'dtype' : 'S11',
+                    'space' : None,
+                    'value' : odir,
+                }
+            }
+        },
+        "ACMstatus" : {
+            'kind' : 'dataset',
+            'dtype' : 'int32',
+            'space' : (1+CODIF_CHANNELS_IN_BLOCK, PAF_N_FREQ_GROUP),
+            'value' : flagged
+        },
+        "azimuth" : {
+            'kind' : 'dataset',
+            'dtype' : 'double',
+            'space' : (1+CODIF_CHANNELS_IN_BLOCK,),
+            'value' : np.empty(1+CODIF_CHANNELS_IN_BLOCK).fill(azimuth)
+        },
+        "bat" : {
+            'kind' : 'dataset',
+            'dtype' : 'uint64',
+            'space' : (1+CODIF_CHANNELS_IN_BLOCK,),
+            'value' : np.empty(1+CODIF_CHANNELS_IN_BLOCK).fill(bat)
+        },
+        "decJ2000" : {
+            'kind' : 'dataset',
+            'dtype' : 'double',
+            'space' : (1+CODIF_CHANNELS_IN_BLOCK,),
+            'value' : np.empty(1+CODIF_CHANNELS_IN_BLOCK).fill(decj2000)
+        },
+        "elevation" : {
+            'kind' : 'dataset',
+            'dtype' : 'double',
+            'space' : (1+CODIF_CHANNELS_IN_BLOCK,),
+            'value' : np.empty(1+CODIF_CHANNELS_IN_BLOCK).fill(elevation)
+        },
+        "onSource" : {
+            'kind' : 'dataset',
+            'dtype' : 'int8',
+            'space' : (1+CODIF_CHANNELS_IN_BLOCK,),
+            'value' : np.empty(1+CODIF_CHANNELS_IN_BLOCK).fill(on_source)
+        },
+        "raJ2000" : {
+            'kind' : 'dataset',
+            'dtype' : 'double',
+            'space' : (1+CODIF_CHANNELS_IN_BLOCK,),
+            'value' : np.empty(1+CODIF_CHANNELS_IN_BLOCK).fill(raj2000)
+        },
+        "rollAngle" : {
+            'kind' : 'dataset',
+            'dtype' : 'double',
+            'space' : (1+CODIF_CHANNELS_IN_BLOCK,),
+            'value' : np.empty(1+CODIF_CHANNELS_IN_BLOCK).fill(roll_angle)
+        },
+        "skyFrequency" : {
+            'kind' : 'dataset',
+            'dtype' : 'double',
+            'space' : (1+CODIF_CHANNELS_IN_BLOCK, PAF_N_FREQ_GROUP),
+            'value' : sky_frequency,
+            'attributes' : {
+                "CLASS" : {
+                    'kind' : 'attribute',
+                    'dtype' : 'S16',
+                    'space' : (1,),
+                    'value' : 'DIMENSION_SCALE'
+                },
+                "NAME" : {
+                    'kind' : 'attribute',
+                    'dtype' : 'S16',
+                    'space' : (1,),
+                    'value' : 'Frequency (MHz)'
+                }
+            }
+        }
+        # "flagged" : {
+        #     'kind' : 'dataset',
+        #     'dtype' : 'int32',
+        #     'space' : (PAF_BANDWIDTH,),
+        #     'value' : flagged,
+        # }
+    }
+    return acm_dict

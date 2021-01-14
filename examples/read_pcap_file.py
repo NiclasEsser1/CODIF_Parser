@@ -15,9 +15,7 @@ if __name__ == '__main__':
     fname = parser.parse_args().fname
     output = parser.parse_args().oname
 
-    reader = CodifFile(fname)
+    file = CodifFile(fname, 'pcap')
     writer = open(output, 'w')
-
     while(reader.next()):
-        reader.add()
-        json.dump(reader.packet.header["codif"], writer, indent=4)
+        json.dump(reader.packet.header.as_dict(), writer, indent=4)

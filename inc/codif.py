@@ -1,3 +1,21 @@
+"""
+ Description:
+ ------------
+    Python based CODIF module.
+    This module provides an interface to read and process CODIF packets from bytestreams.
+    It is also possible to read out and process data which are stored either as '.dada'
+    files produced by dada_dbdisk-tool or '.pcap' files produced by pcap-tool.
+
+    CODIF is a UDP based protcol specified by CSIRO, a more detailed description can be found
+    in doc/paf_backend.pdf
+
+Institution: Max-Planck Institution for Radioastronomy (MPIfR-Bonn)
+    Auf dem Huegel 69, Bonn, Germany
+
+Author: Niclas Eesser <nesser@mpifr-bonn.mpg.de>
+
+"""
+
 from __future__ import division
 import curses
 import pcapy
@@ -20,20 +38,6 @@ from inc.constants import *
 from inc.utils import *
 
 
-"""
- Description:
- ------------
-    CODIF packet tool
-    CODIF is a UDP based protcol specified by CSIRO
-
-Institution: Max-Planck Institution for Radioastronomy (MPIfR-Bonn)
-    Auf dem Huegel 69, Bonn, Germany
-
-Author: Niclas Eesser <nesser@mpifr-bonn.mpg.de>
-
-"""
-
-
 class HandlerError(Exception):
     pass
 
@@ -41,7 +45,7 @@ class CodifPacket:
     """
     Description:
     ------------
-        CodifPacket
+        CodifPacket consists of CodifPayload and CodifHeader objects
     Attributes
     ----------
         header : CodifHeader
@@ -116,9 +120,6 @@ class CodifPayload:
                 bytestream that corresponds to one CODIF packet.
         """
         self.stream = stream
-        self.comp = np.zeros(
-            (CODIF_BLOCKS_IN_PACKET, CODIF_CHANNELS_IN_BLOCK, CODIF_POLARIZATION),
-            dtype="complex")
         self.data = np.frombuffer(stream.getvalue()[CODIF_HEADER:], dtype='int16') \
             .reshape(CODIF_BLOCKS_IN_PACKET, CODIF_CHANNELS_IN_BLOCK, CODIF_POLARIZATION, 2) \
             .astype(dtype='float') \
@@ -162,7 +163,7 @@ class CodifHeader:
         update(stream)
             Updates header data by passed bytestreams.
 
-            update_codif_hdr()
+            update_header()
                 Parses changing values of CODIF header without reading static once.
                 Thus this function is much faster than parse_codif_hdr()
 
@@ -212,7 +213,7 @@ class CodifHeader:
         ----------
             None
         """
-        def update_codif_hdr(self):
+        def update_header():
             """
             Description:
             ------------
@@ -229,7 +230,7 @@ class CodifHeader:
             self.beam_id = (header[2] & 0x000000000000FFFF)
             self.freq_group = (header[2] & 0x00000000FFFF0000) >> 16
         self.stream = stream
-        self.update_codif_hdr()
+        update_header()
 
     def parse(self):
         """
@@ -242,7 +243,7 @@ class CodifHeader:
         ----------
             None
         """
-        def parse_eth_hdr(self):
+        def parse_eth_hdr():
             """
             Description:
             ------------
@@ -256,7 +257,7 @@ class CodifHeader:
             self.src_mac_addr = format_mac_address(self.stream.read(6))
             self.frame_length = struct.unpack("!H",self.stream.read(2))[0]
 
-        def parse_ipv4_hdr(self):
+        def parse_ipv4_hdr():
             """
             Description:
             ------------
@@ -282,7 +283,7 @@ class CodifHeader:
             self.src_addr = socket.inet_ntoa(self.stream.read(4))
             self.dest_addr = socket.inet_ntoa(self.stream.read(4))
 
-        def parse_udp_hdr(self):
+        def parse_udp_hdr():
             """
             Description:
             ------------
@@ -297,7 +298,7 @@ class CodifHeader:
             self.length = struct.unpack("!H",self.stream.read(2))[0]
             self.check_sum = struct.unpack("!H", self.stream.read(2))[0]
 
-        def parse_codif_hdr(self):
+        def parse_codif_hdr():
             """
             Description:
             ------------
@@ -338,22 +339,22 @@ class CodifHeader:
             return 0
         # CODFI layer (=4)
         if self.nbytes == CODIF_PACKET_SIZE:
-            self.parse_codif_hdr()
+            parse_codif_hdr()
         # UDP layer
         elif self.nbytes == CODIF_TOTAL_SIZE - ETHII_HEADER - IPV4_HEADER:
-            self.parse_udp_hdr()
-            self.parse_codif_hdr()
+            parse_udp_hdr()
+            parse_codif_hdr()
         # IPV4 layer
         elif self.nbytes == CODIF_TOTAL_SIZE - ETHII_HEADER:
-            self.parse_ipv4_hdr()
-            self.parse_udp_hdr()
-            self.parse_codif_hdr()
+            parse_ipv4_hdr()
+            parse_udp_hdr()
+            parse_codif_hdr()
         # ETHII layer
         elif self.nbytes == CODIF_TOTAL_SIZE:
-            self.parse_eth_hdr()
-            self.parse_ipv4_hdr()
-            self.parse_udp_hdr()
-            self.parse_codif_hdr()
+            parse_eth_hdr()
+            parse_ipv4_hdr()
+            parse_udp_hdr()
+            parse_codif_hdr()
         else:
             print("Failed to parse CODIF packet with byte size ("
                 + str(self.nbytes)
@@ -1012,8 +1013,9 @@ class CodifHandler:
             Returns calculated ACM as 3D ndarray of size [channels, elements*pol, elements*pol] and frequencies of channels
         """
         # Construct necessary numpy array
-        acm = np.zeros((nchannel, nelements*pol, nelements*pol), dtype="complex")
-        data = np.zeros((nelements*pol, nsamples, nchannel), dtype="complex")
+        acm = np.zeros((nchannel, nelements*pol, nelements*pol), dtype=np.complex64)
+        data = np.zeros((nelements*pol, nsamples, nchannel), dtype=np.complex64)
+        freq = []
 
         # Set counters for displaying current progress
         frame_cnt = 0
@@ -1034,10 +1036,13 @@ class CodifHandler:
                 if frame != None:
                     # Check if we should ignore frame (packet loss)
                     if len(frame) == nelements:
+
                         # Store the first epoch and frame index to calculate duration of snapshot
                         if frame_cnt == 0:
                             first_epoch = frame[0].header.epoch
                             first_frame_id = frame[0].header.frame_id
+                            # Calculate frequencies of channels
+                            freq = np.arange(frame[0].header.freq_group, frame[0].header.freq_group+7)
 
                         frame_cnt += 1
                         file_frame_cnt += 1
@@ -1050,6 +1055,9 @@ class CodifHandler:
                         # Calculate ACM by dot product over each channel within a channel group
                         for chan in range(nchannel):
                             acm[chan] += data[:,:,chan].dot(data[:,:,chan].conj().T)
+                        # if frame_cnt == 50:
+                        #     return  acm, freq, frame_cnt
+
                     # Register lost packet
                     else:
                         uncomplete_cnt += 1
@@ -1066,18 +1074,19 @@ class CodifHandler:
                         uncomplete_cnt,
                         time.time()-start))
 
-        # Calculate frequencies of channels
-        freq = np.arange(frame[0].header.freq_group, frame[0].header.freq_group+7)
-        # Get last epoch and frame index
-        last_epoch = frame[0].header.epoch
-        last_frame_id = frame[0].header.frame_id
-        # Calculate snapshot duration
-        duration = (last_epoch - first_epoch) \
-            + (last_frame_id - first_frame_id) \
-            * CODIF_BLOCKS_IN_PACKET / PAF_SAMPLE_PERIOD
-        print("\nDuration of record: " +str(duration) + " s")
+        try:
+            # Get last epoch and frame index
+            last_epoch = frame[0].header.epoch
+            last_frame_id = frame[0].header.frame_id
+            # Calculate snapshot duration
+            duration = (last_epoch - first_epoch) \
+                + (last_frame_id - first_frame_id) \
+                * CODIF_BLOCKS_IN_PACKET / PAF_SAMPLE_PERIOD
+            print("\nDuration of record: " +str(duration) + " s")
+        except:
+            print("\nCould not determine duration, last frame has no content")
 
-        return acm, freq
+        return acm, freq, frame_cnt
 
 
 
@@ -1297,7 +1306,7 @@ class CodifHandler:
 
     def to_array(self):
         pass
-        
+
     def to_csv(self, dir, fname):
         # Store results in pandas dataframe
         print("Exporting results to " + dir + fname)

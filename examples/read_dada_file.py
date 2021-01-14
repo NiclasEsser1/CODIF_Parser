@@ -1,9 +1,4 @@
-#!/usr/local/bin/python2.7
-
-import json
-import curses
 import argparse
-import os
 from argparse import RawTextHelpFormatter
 
 from inc.codif import *
@@ -26,4 +21,3 @@ if __name__ == '__main__':
     file = CodifFile(dir + fname)
     file.seek_packet(start, offset=DADA_HEADER_SIZE)
     file.read(packets, validate=True, verbose=verbose, skip_payload=False)
-    # file.faulty_packets2json("test")
