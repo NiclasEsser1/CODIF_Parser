@@ -74,28 +74,41 @@ def calc_t_sys(y_factor, flux):
         t_sys[fidx] = 0.5 * A * flux[fidx] / (k_boltz * y_factor[fidx])
     return t_sys
 
+def normalize(weights):
+    channels = weights.shape[0]
+    for f in range(channels):
+        max_pow = np.argmax(np.absolute(weights[f]))
+        weights[f,:] = weights[f, :] / weights[f, max_pow]
+    return weights
+
 def max_snr(acm_off, acm_on):
     channels = acm_off.shape[0]
     elements = acm_off.shape[1]
-    print(elements)
+
     acm_sn = np.zeros((channels, elements, elements), dtype='complex')
     weights = np.zeros((channels, elements), dtype='complex')
     for fidx in range(channels):
         acm_sn[fidx] = np.dot(np.linalg.inv(acm_off[fidx]), acm_on[fidx])
         eig_val, eig_vec = np.linalg.eig(acm_sn[fidx])
+
         w1 = np.zeros((elements, len(eig_val)), dtype='complex')
         w1[np.ix_(range(0, elements), range(0, len(eig_val)))] = eig_vec[:,range(0, len(eig_val))]
-        idx_sorted = np.argsort(np.abs(eig_val))[::-1]
-        idx1 = idx_sorted[0]
-        if len(idx_sorted) > 1:
-            idx2 = idx_sorted[1]
-        else:
-            idx2 = 0
-        if np.argmax(w1[:,idx1].flatten()) in ELEMENT_LIST:
-            help = idx2
-            idx2 = idx1
-            idx1 = help
-        weights[fidx] = w1[:, idx1].flatten()
+
+
+        # idx_sorted = np.argsort(np.abs(eig_val))[::-1]
+        # idx1 = idx_sorted[0]
+        #
+        # if len(idx_sorted) > 1:
+        #     idx2 = idx_sorted[1]
+        # else:
+        #     idx2 = 0
+        #
+        # if np.argmax(w1[:,idx1].flatten()) in ELEMENT_LIST:
+        #     help = idx2
+        #     idx2 = idx1
+        #     idx1 = help
+        # weights[fidx] = w1[:, idx1].flatten()
+        weights[fidx] = w1[:, np.argmax(np.abs(eig_val))]#.flatten()
     return weights
 
 if __name__ == '__main__':
@@ -105,10 +118,10 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='options', formatter_class=RawTextHelpFormatter)
     parser.add_argument('--fname', '-f', action = "store", default = "", dest = "fname", help = "Filename of ACM file. If this argument is not passed the script searches all files that matches the SBID argument.")
     parser.add_argument('--dir', '-d', action="store", default="/media/scratch/nesser/acm_data/", dest = "dir", help = "Directory of ACM file.")
-    parser.add_argument('--output', '-o', action="store", default="/media/scratch/nesser/acm_data/", dest="odir", help="If passed plots are stored in the passed location.")
+    parser.add_argument('--output', '-o', action="store", default="/media/scratch/nesser/acm_data/", dest="odir", help="If passed, plots are stored in the location.")
     parser.add_argument('--sbid', '-i', action="store", dest="sbid", help="Scan ID")
     parser.add_argument('--subsbid', '-sub', action="store", default="-1", dest="subid", help="Subscan ID")
-    parser.add_argument('--band', '-b', action = "store", dest="band", help="The frequency range to plot from low to highest (e.g. 1307-1350). If not passed the whole recorded band ist plotted")
+    # parser.add_argument('--band', '-b', action = "store", dest="band", help="The frequency range to plot from low to highest (e.g. 1307-1350). If not passed the whole recorded band ist plotted")
     parser.add_argument('--element_list', '-e', action="store", dest="element_list", default=1, help="Allows to plot only certain antenna elements (e.g. 15,16,17,18,25,26). By default only the elements used in PAF snapshots wil be plotted. To plot all elements value has to be set to 0")
     # Assign arguments to variables for readability
     fname = parser.parse_args().fname
@@ -116,13 +129,13 @@ if __name__ == '__main__':
     odir = check_slash(parser.parse_args().odir) # Appends a slash to the end of dir, if not passed
     sbid = parser.parse_args().sbid
     subid = parser.parse_args().subid
-    band = parser.parse_args().band
     element_list = parser.parse_args().element_list
+    # band = parser.parse_args().band
     # Parse the desired band
-    if band:
-        freq = np.arange(float(band.split("-")[0]), float(band.split("-")[1]))
-    else:
-        freq = [0 for __ in range(PAF_BANDWIDTH)]
+    # if band:
+    #     freq = np.arange(float(band.split("-")[0]), float(band.split("-")[1]))
+    # else:
+    #     freq = [0 for __ in range(PAF_BANDWIDTH)]
     # If file name was passed, get all files that matches
     if fname != "":
         files = get_file_list(dir, fname)
@@ -143,79 +156,133 @@ if __name__ == '__main__':
     #  End of arguments parsing  #
     ##############################
 
-    # 1. Iterate and read all files
+    # 1. Iterate and read detected ACM files
     for f in files:
         print("Reading "+f+" ... ")
 
         acm_file = ACMFile(f, count_scale=False)
         if '-000.' in f:
-            acm_noise = acm_file.reshape_to_3d()
+            acm_noise, freq = acm_file.reshape_to_3d()
         else:
-            acm_source = acm_file.reshape_to_3d()
+            acm_source, freq = acm_file.reshape_to_3d()
     channels = acm_noise.shape[0]
-    ele_pol = len(ELEMENT_LIST)/2
-
+    elements_per_pol = len(ELEMENT_LIST)/2
+    x_elements = np.arange( 0, elements_per_pol )
+    y_elements = np.arange( elements_per_pol, 2*elements_per_pol )
+    print(acm_noise[:, x_elements, 0:elements_per_pol].shape)
     # Calcuation
-    weights_x = max_snr(acm_noise[:, 0:ele_pol, 0:ele_pol], acm_source[:, 0:ele_pol, 0:ele_pol])
-    weights_y = max_snr(acm_noise[:, ele_pol:2*ele_pol, ele_pol:2*ele_pol], acm_source[:, ele_pol:2*ele_pol, ele_pol:2*ele_pol])
+    weights_x = max_snr(acm_noise[:, x_elements, 0:elements_per_pol], \
+        acm_source[:, x_elements, 0:elements_per_pol])
+    weights_y = max_snr(acm_noise[:, y_elements, elements_per_pol : 2*elements_per_pol], \
+        acm_source[:, y_elements, elements_per_pol : 2*elements_per_pol])
     weights_xy = max_snr(acm_noise, acm_source)
 
 
-    flux = flux_model(freq, "3C295")
-
-    y_factor_x = calc_y_factor(weights_x, acm_source[:, 0:ele_pol, 0:ele_pol])#, acm_noise[:, 0:ele_pol, 0:ele_pol],)
+    flux = flux_model(freq, "HYDRAA")
+    # X-POL
+    weights_x = normalize(weights_x)
+    y_factor_x = calc_y_factor(weights_x, \
+        acm_source[:, x_elements, 0:elements_per_pol], \
+        acm_noise[:, x_elements, 0:elements_per_pol])
     t_sys_x = calc_t_sys(y_factor_x, flux)
-
-    y_factor_y = calc_y_factor(weights_y, acm_source[:, ele_pol:2*ele_pol, ele_pol:2*ele_pol])#, acm_noise[:, ele_pol:2*ele_pol, ele_pol:2*ele_pol])
+    # Y-POL
+    weights_y = normalize(weights_y)
+    y_factor_y = calc_y_factor(weights_y, \
+        acm_source[:, y_elements, elements_per_pol:2*elements_per_pol], \
+        acm_noise[:, y_elements, elements_per_pol:2*elements_per_pol])
     t_sys_y = calc_t_sys(y_factor_y, flux)
-
-    y_factor_xy = calc_y_factor(weights_xy, acm_source)#, acm_noise)
+    # XY-POL
+    weights_xy = normalize(weights_xy)
+    y_factor_xy = calc_y_factor(weights_xy, acm_source, acm_noise)
     t_sys_xy = calc_t_sys(y_factor_xy, flux)
 
     #############
     # Plots     #
     #############
-    fig, sub = plt.subplots(2, 3, figsize=(14,6))
+    # fig, sub = plt.subplots(2, 3, figsize=(14,6))
+    sub = [[0 for __ in range(3)] for __ in range(2)]
 
-    sub[0, 0].set_title("X-pol weights")
-    sub[0, 0].set_xlabel("Elements")
-    sub[0, 0].set_ylabel("Frequency [MHz]")
-    sub[0, 0].set_yticks([0,45, 90])
-    sub[0, 0].set_yticklabels((freq[0], freq[45], freq[-1]))
 
-    sub[1, 0].set_title("Y-Factor X-pol")
-    sub[1, 0].set_ylabel("T sys")
-    sub[1, 0].set_xlabel("Channels")
+    f = plt.figure()
+    f.set_figwidth(18.5)
+    f.set_figheight(10)
+    sub[0][0] = plt.subplot2grid((6, 3), (1, 0), rowspan=4)
+    sub[0][0].set_title("X-pol weights")
+    sub[0][0].set_xlabel("Elements")
+    sub[0][0].set_ylabel("Frequency [MHz]")
+    sub[0][0].set_yticks([0, 45, 90])
+    sub[0][0].set_xticks([0, 17, 35])
+    sub[0][0].set_yticklabels((freq[0], freq[45], freq[-1]))
+    sub[0][0].set_xticklabels((0, 17, 35))
 
-    sub[0, 1].set_title("Y-pol weights")
-    sub[0, 1].set_yticks([0,45, 90])
-    sub[0, 1].set_xlabel("Elements")
-    sub[0, 1].set_ylabel("Frequency [MHz]")
-    sub[0, 1].set_yticklabels((freq[0], freq[45], freq[-1]))
+    sub[0][1] = plt.subplot2grid((6, 3), (1, 1), rowspan=4)
+    sub[0][1].set_title("Y-pol weights")
+    sub[0][1].set_yticks([0, 45, 90])
+    sub[0][1].set_xticks([0, 17, 35])
+    sub[0][1].set_xlabel("Elements")
+    sub[0][1].set_ylabel("Frequency [MHz]")
+    sub[0][1].set_yticklabels((freq[0], freq[45], freq[-1]))
+    sub[0][1].set_xticklabels((36, 53, 71))
 
-    sub[1, 1].set_title("Y-Factor Y-pol")
-    sub[1, 1].set_ylabel("T sys")
-    sub[1, 1].set_xlabel("Channels")
+    sub[0][2] = plt.subplot2grid((6, 3), (1, 2), rowspan=4)
+    sub[0][2].set_title("XY-pol weights")
+    sub[0][2].set_yticks([0, 45, 90])
+    sub[0][2].set_xticks([0, 15, 35, 53, 71])
+    sub[0][2].set_xlabel("Elements")
+    sub[0][2].set_ylabel("Frequency [MHz]")
+    sub[0][2].set_yticklabels((freq[0], freq[45], freq[-1]))
+    sub[0][2].set_xticklabels([0, 15, 35, 53, 71])
 
-    sub[0, 2].set_title("XY-pol weights")
-    sub[0, 2].set_yticks([0,45, 90])
-    sub[0, 2].set_xlabel("Elements")
-    sub[0, 2].set_ylabel("Frequency [MHz]")
-    sub[0, 2].set_yticklabels((freq[0], freq[45], freq[-1]))
+    sub[1][0] = plt.subplot2grid((6, 3), (5,0), colspan=3)
+    table_list = np.asarray([np.arange(0, len(ELEMENT_LIST)), ELEMENT_LIST])
+    table = sub[1][0].table(cellText=table_list, cellLoc='right', loc='center', rowLabels=["Enumerating", "Focal ID"])
+    table.auto_set_font_size(False)
+    table.set_fontsize(8)
+    sub[1][0].get_xaxis().set_visible(False)
+    sub[1][0].get_yaxis().set_visible(False)
+    sub[1][0].set_frame_on(False)
 
-    sub[1, 2].set_title("Y-Factor XY-pol")
-    sub[1, 2].set_ylabel("T sys")
-    sub[1, 2].set_xlabel("Channels")
-
-    sub[0, 0].imshow(np.abs(weights_x))
-    sub[0, 1].imshow(np.abs(weights_y))
-    sub[0, 2].imshow(np.abs(weights_xy))
-    sub[1, 0].plot(t_sys_x)
-    sub[1, 1].plot(t_sys_y)
-    sub[1, 2].plot(t_sys_xy)
+    sub[0][0].imshow(np.abs(weights_x))
+    sub[0][1].imshow(np.abs(weights_y))
+    sub[0][2].imshow(np.abs(weights_xy))
+    plt.subplots_adjust(left=1, bottom=0.2, right=1.1)
     plt.tight_layout()
+    plt.savefig(odir + "weights.png")
     plt.show()
 
 
-    # print(y)
-        # acm_data = np.asarray(acm_file["ACMdata"], dtype='complex')
+    fig, sub = plt.subplots(2, 3, figsize=(14,6))
+
+    sub[0, 0].set_title("T sys (X-pol)")
+    sub[0, 0].set_ylabel("")
+    sub[0, 0].set_xlabel("Channels")
+
+    sub[1, 0].set_title("Y-Factor (X-pol)")
+    sub[1, 0].set_ylabel("")
+    sub[1, 0].set_xlabel("Channels")
+
+    sub[0, 1].set_title("T sys")
+    sub[0, 1].set_ylabel("")
+    sub[0, 1].set_xlabel("Channels")
+
+    sub[1, 1].set_title("Y-Factor (Y-pol)")
+    sub[1, 1].set_ylabel("")
+    sub[1, 1].set_xlabel("Channels")
+
+    sub[0, 2].set_title("T sys (XY-pol)")
+    sub[0, 2].set_ylabel("T sys")
+    sub[0, 2].set_xlabel("Channels")
+
+    sub[1, 2].set_title("Y-Factor (XY-pol)")
+    sub[1, 2].set_ylabel("")
+    sub[1, 2].set_xlabel("Channels")
+
+    sub[0, 0].plot(t_sys_x)
+    sub[0, 1].plot(t_sys_y)
+    sub[0, 2].plot(t_sys_xy)
+    sub[1, 0].plot(y_factor_x.T)
+    sub[1, 1].plot(y_factor_y.T)
+    sub[1, 2].plot(y_factor_xy.T)
+    plt.tight_layout()
+    fig.savefig(odir + "t_sys.png")
+    plt.show()

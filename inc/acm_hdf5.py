@@ -184,12 +184,13 @@ class ACMFile(h5py.File):
 
     def reshape_to_3d(self, element_list=ELEMENT_LIST, flagged=True):
         freq_dict = self.make_freq_ind_dict(flagged)
-        # data = np.zeros((len(freq_dict)), dtype=np.complex64)
+        freq = []
         data = [0 for __ in range(len(freq_dict))]
         for idx, (key, value) in enumerate(freq_dict.items()):
-            data[idx] = select_from_list(self.acm[value[0], value[1]],element_list)[0]
+            data[idx] = select_from_list(self.acm[value[0], value[1]], element_list)[0]
+            freq.append(float(key))
 
-        return np.asarray(data, dtype=np.complex64)
+        return np.asarray(data, dtype=np.complex64), np.asarray(freq)
 
     # todo: make acm a parameter and optionally run count_scale on it at init time?
     # todo: this might be a good spot to calculate the matrix quality stats as the data is traversed
